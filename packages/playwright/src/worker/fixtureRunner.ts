@@ -134,12 +134,21 @@ class Fixture {
     await useFuncStarted;
   }
 
-  async teardown(testInfo: TestInfoImpl, runnable: RunnableDescription) {
+  async teardown(testInfo: TestInfoImpl, runnable: RunnableDescription): Promise<boolean> {
+    const fixtureRunnable = { ...runnable, fixture: this._teardownDescription };
+    const isTimeExhausted = testInfo._timeoutManager.isTimeExhaustedFor(fixtureRunnable);
+
+    // A test-scoped fixture without an explicit timeout shares the runnable slot.
+    // Keep it registered when that shared slot is exhausted so that worker cleanup
+    // can retry it with a fresh slot. Fixtures with dedicated slots retain the
+    // existing force-cleanup behaviour because another runnable slot cannot help.
+    if (isTimeExhausted && !this._teardownDescription.slot)
+      return false;
+
     try {
-      const fixtureRunnable = { ...runnable, fixture: this._teardownDescription };
       // Do not even start the teardown for a fixture that does not have any
-      // time remaining in the time slot. This avoids cascading timeouts.
-      if (!testInfo._timeoutManager.isTimeExhaustedFor(fixtureRunnable)) {
+      // time remaining in its dedicated time slot. This avoids cascading timeouts.
+      if (!isTimeExhausted) {
         const run = () => testInfo._runWithTimeout(fixtureRunnable, () => this._teardownInternal());
         if (this._stepInfo)
           await testInfo._runAsStep(this._stepInfo, run);
@@ -148,11 +157,12 @@ class Fixture {
       }
     } finally {
       // To preserve fixtures integrity, forcefully cleanup fixtures
-      // that cannnot teardown due to a timeout or an error.
+      // that cannot teardown due to a timeout or an error.
       for (const dep of this._deps)
         dep._usages.delete(this);
       this.runner.instanceForId.delete(this.registration.id);
     }
+    return true;
   }
 
   private async _teardownInternal() {
@@ -216,17 +226,20 @@ export class FixtureRunner {
     for (const fixture of allFixtures)
       fixture._collectFixturesInTeardownOrder(scope, collector);
     let firstError: Error | undefined;
+    let skippedTeardown = false;
     for (const fixture of collector) {
       try {
-        await fixture.teardown(testInfo, runnable);
+        skippedTeardown = !await fixture.teardown(testInfo, runnable) || skippedTeardown;
       } catch (error) {
         firstError = firstError ?? error;
       }
     }
     if (scope === 'test')
-      this.testScopeClean = true;
+      this.testScopeClean = !Array.from(this.instanceForId.values()).some(fixture => fixture.registration.scope === 'test');
     if (firstError)
       throw firstError;
+    if (skippedTeardown)
+      throw new Error('Test timeout was exhausted before all test fixtures could be torn down.');
   }
 
   async resolveParametersForFunction(fn: Function, testInfo: TestInfoImpl, autoFixtures: 'worker' | 'test' | 'all-hooks-only', runnable: RunnableDescription): Promise<{ result: object } | null> {
