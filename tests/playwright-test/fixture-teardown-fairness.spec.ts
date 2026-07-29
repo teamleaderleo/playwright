@@ -59,3 +59,59 @@ test('should give every deferred fixture a cleanup opportunity during worker cle
     ['sentinel-1'],
   ]);
 });
+
+test('should carry unused cleanup budget to later deferred fixtures', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test as base } from '@playwright/test';
+
+      const test = base.extend({
+        sentinelA: async ({}, use, testInfo) => {
+          await use();
+          const name = 'sentinel-a-' + testInfo.retry;
+          testInfo.attachments.push({
+            name,
+            contentType: 'text/plain',
+            body: Buffer.from(name),
+          });
+          console.log('%%' + name);
+        },
+        sentinelB: async ({}, use, testInfo) => {
+          await use();
+          const name = 'sentinel-b-' + testInfo.retry;
+          testInfo.attachments.push({
+            name,
+            contentType: 'text/plain',
+            body: Buffer.from(name),
+          });
+          console.log('%%' + name);
+        },
+        blocker: async ({}, use) => {
+          await use();
+          await new Promise(f => setTimeout(f, 1000));
+        },
+      });
+
+      test.afterEach(async () => {
+        await new Promise(f => setTimeout(f, 1000));
+      });
+
+      test('passes its body', async ({ sentinelA, sentinelB, blocker }) => {
+      });
+    `,
+  }, { timeout: 120, retries: 1 });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+  expect(result.outputLines.filter(line => line.startsWith('sentinel-'))).toEqual([
+    'sentinel-b-0',
+    'sentinel-a-0',
+    'sentinel-b-1',
+    'sentinel-a-1',
+  ]);
+  const reportTest = result.report.suites[0].specs[0].tests[0];
+  expect(reportTest.results.map(testResult => testResult.attachments.map(attachment => attachment.name).filter(name => name.startsWith('sentinel-')))).toEqual([
+    ['sentinel-b-0', 'sentinel-a-0'],
+    ['sentinel-b-1', 'sentinel-a-1'],
+  ]);
+});
