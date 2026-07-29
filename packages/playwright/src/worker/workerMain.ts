@@ -432,6 +432,9 @@ export class WorkerMain extends ProcessRunner {
     // After hooks get an additional timeout.
     const afterHooksTimeout = calculateMaxTimeout(this._project.project.timeout, testInfo.timeout);
     const afterHooksSlot = { timeout: afterHooksTimeout, elapsed: 0 };
+    // A failed worker gets one bounded full-cleanup budget. Deferred test fixtures
+    // spend from it before afterAll so hook fixture resolution sees fresh instances.
+    const workerCleanupSlot = { timeout: this._project.project.timeout, elapsed: 0 };
     await testInfo._runAsStep({ title: 'After Hooks', category: 'hook' }, async () => {
       let firstAfterHooksError: Error | undefined;
 
@@ -458,6 +461,17 @@ export class WorkerMain extends ProcessRunner {
         await this._fixtureRunner.teardownScope('test', testInfo, { type: 'test', slot: afterHooksSlot });
       } catch (error) {
         firstAfterHooksError = firstAfterHooksError ?? error;
+      }
+
+      // If after hooks left cleanup debt, retry test fixtures before afterAll resolves
+      // its own test-scoped fixtures. Reuse the later Worker Cleanup budget so this
+      // changes ordering without extending the worker shutdown deadline.
+      if (firstAfterHooksError) {
+        try {
+          await this._fixtureRunner.teardownScope('test', testInfo, { type: 'test', slot: workerCleanupSlot });
+        } catch (error) {
+          firstAfterHooksError = firstAfterHooksError ?? error;
+        }
       }
 
       // Run "afterAll" hooks for suites that are not shared with the next test.
@@ -488,11 +502,9 @@ export class WorkerMain extends ProcessRunner {
       await testInfo._runAsStep({ title: 'Worker Cleanup', category: 'hook' }, async () => {
         let firstWorkerCleanupError: Error | undefined;
 
-        // Give it more time for the full cleanup.
-        const teardownSlot = { timeout: this._project.project.timeout, elapsed: 0 };
         try {
-          // Attribute to 'test' so that users understand they should probably increate the test timeout to fix this issue.
-          await this._fixtureRunner.teardownScope('test', testInfo, { type: 'test', slot: teardownSlot });
+          // Attribute to 'test' so that users understand they should probably increase the test timeout to fix this issue.
+          await this._fixtureRunner.teardownScope('test', testInfo, { type: 'test', slot: workerCleanupSlot });
         } catch (error) {
           firstWorkerCleanupError = firstWorkerCleanupError ?? error;
         }
@@ -507,7 +519,7 @@ export class WorkerMain extends ProcessRunner {
 
         try {
           // Attribute to 'teardown' because worker fixtures are not perceived as a part of a test.
-          await this._fixtureRunner.teardownScope('worker', testInfo, { type: 'teardown', slot: teardownSlot });
+          await this._fixtureRunner.teardownScope('worker', testInfo, { type: 'teardown', slot: workerCleanupSlot });
         } catch (error) {
           firstWorkerCleanupError = firstWorkerCleanupError ?? error;
         }
