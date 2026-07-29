@@ -1,0 +1,28 @@
+name: Fieldwork blob report interruption matrix
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/blob-report-journal-probe
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-blob-report-interruption-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-test:
+    name: Ubuntu Node 22
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          bot-name: fieldwork-blob-report-interruption
+          command: >-
+            npm run ttest --
+            tests/playwright-test/reporter-blob-interruption.spec.ts
+            --workers=1
