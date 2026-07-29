@@ -18,6 +18,9 @@ import { test, expect } from './playwright-test-fixtures';
 
 test('should not tear down a dependency while a timed-out child finalizer is still running', async ({ runInlineTest }) => {
   const result = await runInlineTest({
+    'playwright.config.ts': `
+      export default { timeout: 2000 };
+    `,
     'a.spec.ts': `
       import { test as base } from '@playwright/test';
 
@@ -37,7 +40,7 @@ test('should not tear down a dependency while a timed-out child finalizer is sti
       });
 
       // Exhaust a short full test lifecycle slot, while Worker Cleanup retains
-      // the larger project timeout configured by runInlineTest below.
+      // the larger project timeout from playwright.config.ts.
       test.describe.configure({ timeout: 120 });
 
       test.afterEach(async () => {
@@ -47,7 +50,7 @@ test('should not tear down a dependency while a timed-out child finalizer is sti
       test('passes its body', async ({ child }) => {
       });
     `,
-  }, { timeout: 2000 });
+  });
 
   expect(result.exitCode).toBe(1);
   expect(result.failed).toBe(1);
