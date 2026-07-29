@@ -1,9 +1,9 @@
 name: Fieldwork fixture teardown pre-afterAll recovery
 
 on:
-  push:
+  pull_request:
     branches:
-      - fieldwork/fixture-teardown-pre-afterall-recovery
+      - fieldwork/fixture-teardown-afterall-isolation-probe
   workflow_dispatch:
 
 permissions:
