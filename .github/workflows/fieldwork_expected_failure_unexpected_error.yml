@@ -1,0 +1,33 @@
+name: Fieldwork unexpected cleanup result prototype
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/fieldwork_expected_failure_unexpected_error.yml'
+      - 'fieldwork-experiments/expected-failure-unexpected-error/**'
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-unexpected-cleanup-result-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-test:
+    name: Ubuntu Node 22
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Apply candidate patch
+        run: |
+          git apply --check fieldwork-experiments/expected-failure-unexpected-error/unexpected-error.patch
+          git apply fieldwork-experiments/expected-failure-unexpected-error/unexpected-error.patch
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          bot-name: fieldwork-unexpected-cleanup-result
+          command: >-
+            npm run ttest --
+            tests/playwright-test/fixture-teardown-expected-failure-cleanup.spec.ts
+            --workers=1
