@@ -1,0 +1,146 @@
+diff --git a/packages/playwright/src/worker/testInfo.ts b/packages/playwright/src/worker/testInfo.ts
+--- a/packages/playwright/src/worker/testInfo.ts
++++ b/packages/playwright/src/worker/testInfo.ts
+@@ -105,6 +105,7 @@ export class TestInfoImpl implements TestInfo {
+   _onUserStepEnd?: () => Promise<void>;
+   _hasNonRetriableError = false;
+   _hasUnhandledError = false;
++  _hasIncompleteFixtureCleanup = false;
+   _allowSkips = false;
+ 
+   // ------------ Main methods ------------
+diff --git a/packages/playwright/src/worker/fixtureRunner.ts b/packages/playwright/src/worker/fixtureRunner.ts
+--- a/packages/playwright/src/worker/fixtureRunner.ts
++++ b/packages/playwright/src/worker/fixtureRunner.ts
+@@ -159,10 +159,10 @@ class Fixture {
+     const isTimeExhausted = testInfo._timeoutManager.isTimeExhaustedFor(fixtureRunnable);
+ 
+     // A test-scoped fixture without an explicit timeout shares the runnable slot.
+-    // During final test cleanup, keep it registered when that shared slot is
+-    // exhausted so that worker cleanup can retry it with a fresh slot. Hook
+-    // fixture scopes continue force-cleaning because later hooks may still run.
++    // During final test cleanup, keep it registered when that shared slot is
++    // exhausted so that bounded recovery can retry it before afterAll resolves
++    // fixtures. Hook fixture scopes continue force-cleaning because later hooks
++    // may still run.
+     if (isTimeExhausted && runnable.type === 'test' && !this._teardownDescription.slot && !retrySlot) {
+       this._teardownDeferred = true;
+       return { state: 'deferred' };
+@@ -304,6 +304,7 @@ export class FixtureRunner {
+     const cleanupReceipt: { id: string, name: string, location: Location, state: Exclude<FixtureTeardownState, 'deferred'> }[] = [];
+     let firstError: Error | undefined;
+     let skippedTeardown = false;
++    let incompleteDeferredCleanup = false;
+     for (const fixture of collector) {
+       const group = groupByFixture.get(fixture);
+       if (group && !group.slot) {
+@@ -322,8 +323,11 @@ export class FixtureRunner {
+         if (result.error)
+           firstError = firstError ?? result.error;
+         skippedTeardown = result.state === 'deferred' || result.state === 'not-started-budget-exhausted' || skippedTeardown;
+-        if (deferredFixtures.has(fixture) && result.state !== 'deferred')
++        if (deferredFixtures.has(fixture) && result.state !== 'deferred') {
+           cleanupReceipt.push({ id: fixture.registration.id, name: fixture.registration.name, location: fixture.registration.location, state: result.state });
++          incompleteDeferredCleanup = result.state !== 'completed' || incompleteDeferredCleanup;
++        }
+       } finally {
+         if (group?.slot && runnable.slot) {
+           const elapsed = group.slot.elapsed - slotElapsedBefore;
+@@ -356,14 +360,14 @@ export class FixtureRunner {
+     if (scope === 'test')
+       this.testScopeClean = !Array.from(this.instanceForId.values()).some(fixture => fixture.registration.scope === 'test');
++    if (incompleteDeferredCleanup)
++      testInfo._hasIncompleteFixtureCleanup = true;
+     if (firstError)
+       throw firstError;
+     if (skippedTeardown) {
+       const error = new TimeoutManagerError('Test timeout was exhausted before all test fixtures could be torn down.');
+-      if (!testInfo._isFailure()) {
++      if (!testInfo._isFailure())
+         testInfo._failWithError(error);
+-        if (!testInfo._isFailure())
+-          testInfo.status = 'timedOut';
+-      }
+       throw error;
+     }
+   }
+diff --git a/packages/playwright/src/worker/workerMain.ts b/packages/playwright/src/worker/workerMain.ts
+--- a/packages/playwright/src/worker/workerMain.ts
++++ b/packages/playwright/src/worker/workerMain.ts
+@@ -494,7 +494,7 @@ export class WorkerMain extends ProcessRunner {
+       }
+     }).catch(() => {});  // Ignore the top-level error, it is already inside TestInfo.errors.
+ 
+-    if (testInfo._isFailure())
++    if (testInfo._isFailure() || testInfo._hasIncompleteFixtureCleanup)
+       this._isStopped = true;
+ 
+     if (this._isStopped) {
+diff --git a/tests/playwright-test/fixture-teardown-resumption.spec.ts b/tests/playwright-test/fixture-teardown-resumption.spec.ts
+--- a/tests/playwright-test/fixture-teardown-resumption.spec.ts
++++ b/tests/playwright-test/fixture-teardown-resumption.spec.ts
+@@ -124,7 +124,7 @@ test('should retry a passing body when fixture cleanup is skipped after afterEach timeout', async ({ runInlineTest }) => {
+   ]);
+ });
+ 
+-test('should replace the worker when cleanup debt follows an expected failure', async ({ runInlineTest }) => {
++test('should not force retry when deferred cleanup recovers after an expected body failure', async ({ runInlineTest }) => {
+   const result = await runInlineTest({
+     'a.spec.ts': `
+       import { test as base, expect } from '@playwright/test';
+@@ -148,12 +148,57 @@ test('should replace the worker when cleanup debt follows an expected failure', async ({ runInlineTest }) => {
+     `,
+   }, { timeout: 100, retries: 1 });
+ 
+-  expect(result.exitCode).toBe(1);
+-  expect(result.failed).toBe(1);
++  expect(result.exitCode).toBe(0);
++  expect(result.passed).toBe(1);
+   const markers = result.outputLines.filter(line => line.startsWith('sentinel-'));
+-  expect(markers).toHaveLength(2);
+-  expect(new Set(markers.map(line => line.split('-worker-')[1])).size).toBe(2);
++  expect(markers).toHaveLength(1);
++  expect(markers[0]).toMatch(/^sentinel-0-worker-\d+$/);
++});
++
++test('should replace the worker when deferred cleanup remains incomplete after an expected body failure', async ({ runInlineTest }) => {
++  const result = await runInlineTest({
++    'a.spec.ts': `
++      import { test as base, expect } from '@playwright/test';
++
++      const test = base.extend({
++        sentinel: async ({}, use, testInfo) => {
++          await use();
++          console.log('%%sentinel-start-' + testInfo.retry + '-worker-' + testInfo.workerIndex);
++          await new Promise(f => setTimeout(f, 1000));
++        },
++      });
++
++      test.afterEach(async ({}, testInfo) => {
++        if (testInfo.title === 'expected body failure')
++          await new Promise(f => setTimeout(f, 1000));
++      });
++
++      test('expected body failure', async ({ sentinel }) => {
++        test.fail();
++        expect(1).toBe(2);
++      });
++
++      test('runs after incomplete cleanup', async ({}, testInfo) => {
++        console.log('%%next-worker-' + testInfo.workerIndex);
++      });
++    `,
++  }, { timeout: 100, retries: 1 });
++
++  expect(result.exitCode).toBe(0);
++  expect(result.passed).toBe(2);
++  const cleanupMarkers = result.outputLines.filter(line => line.startsWith('sentinel-start-'));
++  const nextMarkers = result.outputLines.filter(line => line.startsWith('next-worker-'));
++  expect(cleanupMarkers).toHaveLength(1);
++  expect(nextMarkers).toHaveLength(1);
++  const cleanupWorker = cleanupMarkers[0].split('-worker-')[1];
++  const nextWorker = nextMarkers[0].split('next-worker-')[1];
++  expect(nextWorker).not.toBe(cleanupWorker);
+ });
+ 
+ test('should not retain a hook-scoped fixture for the next afterAll hook', async ({ runInlineTest }) => {
