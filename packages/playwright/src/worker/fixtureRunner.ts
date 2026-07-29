@@ -21,6 +21,7 @@ import { filterStackFile } from '@utils/stackTrace';
 import { fixtures } from '../common';
 import { formatLocation } from '../util';
 
+import { TimeoutManagerError } from './timeoutManager';
 import type { TestInfoImpl } from './testInfo';
 import type { FixtureDescription, RunnableDescription } from './timeoutManager';
 import type { WorkerInfo } from '../../types/test';
@@ -239,8 +240,11 @@ export class FixtureRunner {
       this.testScopeClean = !Array.from(this.instanceForId.values()).some(fixture => fixture.registration.scope === 'test');
     if (firstError)
       throw firstError;
-    if (skippedTeardown)
-      throw new Error('Test timeout was exhausted before all test fixtures could be torn down.');
+    if (skippedTeardown) {
+      const error = new TimeoutManagerError('Test timeout was exhausted before all test fixtures could be torn down.');
+      testInfo._failWithError(error);
+      throw error;
+    }
   }
 
   async resolveParametersForFunction(fn: Function, testInfo: TestInfoImpl, autoFixtures: 'worker' | 'test' | 'all-hooks-only', runnable: RunnableDescription): Promise<{ result: object } | null> {
