@@ -120,10 +120,25 @@ diff --git a/packages/playwright-core/src/tools/backend/context.ts b/packages/pl
    }
  
    private _onPageCreated(page: playwrightTypes.Page) {
+diff --git a/packages/playwright-core/src/tools/backend/response.ts b/packages/playwright-core/src/tools/backend/response.ts
+--- a/packages/playwright-core/src/tools/backend/response.ts
++++ b/packages/playwright-core/src/tools/backend/response.ts
+@@ -124,6 +124,11 @@ export class Response {
+     this.addTextResult(resolvedFile.printableLink);
+   }
+ 
++  addExistingFileResult(title: string, fileName: string) {
++    this._writtenFiles.add(path.resolve(fileName));
++    this.addFileLink(title, fileName);
++  }
++
+   addFileLink(title: string, fileName: string) {
+     const relativeName = this._computeRelativeTo(fileName);
+     this.addTextResult(`- [${title}](${relativeName})`);
 diff --git a/packages/playwright-core/src/tools/backend/video.ts b/packages/playwright-core/src/tools/backend/video.ts
 --- a/packages/playwright-core/src/tools/backend/video.ts
 +++ b/packages/playwright-core/src/tools/backend/video.ts
-@@ -55,18 +55,23 @@ const videoStop = defineTool({
+@@ -55,18 +55,19 @@ const videoStop = defineTool({
    },
  
    handle: async (context, params, response) => {
@@ -135,18 +150,18 @@ diff --git a/packages/playwright-core/src/tools/backend/video.ts b/packages/play
        return;
      }
 -    for (const fileName of fileNames) {
+-      const resolvedFile = await response.resolveClientFile({
+-        prefix: 'video',
+-        ext: 'webm',
+-        suggestedFilename: fileName
+-      }, 'Video');
+-      await response.addFileResult(resolvedFile, null);
 +    for (const result of results) {
 +      if (result.error) {
 +        response.addError(`Failed to finalize video "${result.fileName}":\n${result.error}`);
 +        continue;
 +      }
-       const resolvedFile = await response.resolveClientFile({
-         prefix: 'video',
-         ext: 'webm',
--        suggestedFilename: fileName
-+        suggestedFilename: result.fileName
-       }, 'Video');
-       await response.addFileResult(resolvedFile, null);
++      response.addExistingFileResult('Video', result.fileName);
      }
    },
  });
