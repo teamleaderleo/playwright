@@ -1,5 +1,6 @@
 name: Fieldwork pre-afterAll recovery regression stack
 
+# Fork-only execution harness for Fieldwork issue #26.
 on:
   pull_request:
     branches:
