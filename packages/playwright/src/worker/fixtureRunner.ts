@@ -301,7 +301,7 @@ export class FixtureRunner {
     let unallocatedBudget = runnable.slot ? Math.max(0, runnable.slot.timeout - runnable.slot.elapsed) : 0;
     let unallocatedWeight = groups.reduce((total, group) => total + group.weight, 0);
 
-    const cleanupReceipt: { name: string, state: Exclude<FixtureTeardownState, 'deferred'> }[] = [];
+    const cleanupReceipt: { id: string, name: string, location: Location, state: Exclude<FixtureTeardownState, 'deferred'> }[] = [];
     let firstError: Error | undefined;
     let skippedTeardown = false;
     for (const fixture of collector) {
@@ -322,7 +322,7 @@ export class FixtureRunner {
           firstError = firstError ?? result.error;
         skippedTeardown = result.state === 'deferred' || result.state === 'not-started-budget-exhausted' || skippedTeardown;
         if (deferredFixtures.has(fixture) && result.state !== 'deferred')
-          cleanupReceipt.push({ name: fixture.registration.name, state: result.state });
+          cleanupReceipt.push({ id: fixture.registration.id, name: fixture.registration.name, location: fixture.registration.location, state: result.state });
       } finally {
         if (group?.slot && runnable.slot) {
           const elapsed = group.slot.elapsed - slotElapsedBefore;
@@ -336,10 +336,10 @@ export class FixtureRunner {
 
     if (cleanupReceipt.length) {
       try {
-        await testInfo.attach('fixture-cleanup', {
+        await testInfo.attach('_fixture-cleanup', {
           body: Buffer.from(JSON.stringify({
             version: 1,
-            phase: 'worker-cleanup',
+            phase: 'deferred-test-fixture-recovery',
             budget: runnable.slot ? {
               timeout: runnable.slot.timeout,
               elapsed: runnable.slot.elapsed,
