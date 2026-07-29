@@ -65,3 +65,50 @@ test('should report started and unstarted deferred fixture cleanup', async ({ ru
     { name: 'root', state: 'not-started-budget-exhausted' },
   ]);
 });
+
+test('should report completed and failed deferred fixture cleanup', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      export default { timeout: 1000 };
+    `,
+    'a.spec.ts': `
+      import { test as base } from '@playwright/test';
+
+      const test = base.extend({
+        completedFixture: async ({}, use) => {
+          await use();
+          console.log('%%completed-fixture');
+        },
+        failedFixture: async ({}, use) => {
+          await use();
+          console.log('%%failed-fixture-started');
+          throw new Error('cleanup exploded');
+        },
+      });
+
+      test.afterEach(async () => {
+        await new Promise(f => setTimeout(f, 1500));
+      });
+
+      test('passes its body', async ({ completedFixture, failedFixture }) => {
+      });
+    `,
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+  expect(result.outputLines.filter(line => line === 'completed-fixture' || line === 'failed-fixture-started')).toEqual([
+    'failed-fixture-started',
+    'completed-fixture',
+  ]);
+  expect(result.output).toContain('cleanup exploded');
+
+  const reportTest = result.report.suites[0].specs[0].tests[0];
+  const receiptAttachment = reportTest.results[0].attachments.find(attachment => attachment.name === 'fixture-cleanup');
+  expect(receiptAttachment?.contentType).toBe('application/json');
+  const receipt = JSON.parse(Buffer.from(receiptAttachment!.body!, 'base64').toString('utf8'));
+  expect(receipt.fixtures.filter((entry: any) => entry.name === 'failedFixture' || entry.name === 'completedFixture')).toEqual([
+    { name: 'failedFixture', state: 'failed-after-start' },
+    { name: 'completedFixture', state: 'completed' },
+  ]);
+});
