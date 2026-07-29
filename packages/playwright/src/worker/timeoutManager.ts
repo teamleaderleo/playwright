@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright Microsoft Corporation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +41,7 @@ export type FixtureDescription = {
   phase: 'setup' | 'teardown';
   location?: Location;
   slot?: TimeSlot;  // Falls back to the runnable slot.
+  recovery?: boolean;
 };
 
 type Running = {
@@ -173,39 +174,44 @@ export class TimeoutManager {
     let message = '';
     const timeout = running.slot.timeout;
     const runnable = running.runnable;
-    switch (runnable.type) {
-      case 'test': {
-        if (runnable.fixture) {
-          if (runnable.fixture.phase === 'setup')
-            message = `Test timeout of ${timeout}ms exceeded while setting up "${runnable.fixture.title}".`;
-          else
-            message = `Tearing down "${runnable.fixture.title}" exceeded the test timeout of ${timeout}ms.`;
-        } else {
-          message = `Test timeout of ${timeout}ms exceeded.`;
+    if (runnable.fixture?.recovery) {
+      const action = runnable.fixture.phase === 'setup' ? 'setting up' : 'tearing down';
+      message = `Fixture recovery allocation of ${timeout}ms was exhausted while ${action} "${runnable.fixture.title}".`;
+    } else {
+      switch (runnable.type) {
+        case 'test': {
+          if (runnable.fixture) {
+            if (runnable.fixture.phase === 'setup')
+              message = `Test timeout of ${timeout}ms exceeded while setting up "${runnable.fixture.title}".`;
+            else
+              message = `Tearing down "${runnable.fixture.title}" exceeded the test timeout of ${timeout}ms.`;
+          } else {
+            message = `Test timeout of ${timeout}ms exceeded.`;
+          }
+          break;
         }
-        break;
+        case 'afterEach':
+        case 'beforeEach':
+          message = `Test timeout of ${timeout}ms exceeded while running "${runnable.type}" hook.`;
+          break;
+        case 'beforeAll':
+        case 'afterAll':
+          message = `"${runnable.type}" hook timeout of ${timeout}ms exceeded.`;
+          break;
+        case 'teardown': {
+          if (runnable.fixture)
+            message = `Worker teardown timeout of ${timeout}ms exceeded while ${runnable.fixture.phase === 'setup' ? 'setting up' : 'tearing down'} "${runnable.fixture.title}".`;
+          else
+            message = `Worker teardown timeout of ${timeout}ms exceeded.`;
+          break;
+        }
+        case 'skip':
+        case 'slow':
+        case 'fixme':
+        case 'fail':
+          message = `"${runnable.type}" modifier timeout of ${timeout}ms exceeded.`;
+          break;
       }
-      case 'afterEach':
-      case 'beforeEach':
-        message = `Test timeout of ${timeout}ms exceeded while running "${runnable.type}" hook.`;
-        break;
-      case 'beforeAll':
-      case 'afterAll':
-        message = `"${runnable.type}" hook timeout of ${timeout}ms exceeded.`;
-        break;
-      case 'teardown': {
-        if (runnable.fixture)
-          message = `Worker teardown timeout of ${timeout}ms exceeded while ${runnable.fixture.phase === 'setup' ? 'setting up' : 'tearing down'} "${runnable.fixture.title}".`;
-        else
-          message = `Worker teardown timeout of ${timeout}ms exceeded.`;
-        break;
-      }
-      case 'skip':
-      case 'slow':
-      case 'fixme':
-      case 'fail':
-        message = `"${runnable.type}" modifier timeout of ${timeout}ms exceeded.`;
-        break;
     }
     const fixtureWithSlot = runnable.fixture?.slot ? runnable.fixture : undefined;
     if (fixtureWithSlot)
