@@ -36,14 +36,15 @@ test('should not tear down a dependency while a timed-out child finalizer is sti
         },
       });
 
+      // Exhaust a short full test lifecycle slot, while Worker Cleanup retains
+      // the larger project timeout configured by runInlineTest below.
+      test.describe.configure({ timeout: 120 });
+
       test.afterEach(async () => {
         await new Promise(f => setTimeout(f, 1000));
       });
 
       test('passes its body', async ({ child }) => {
-        // Exhaust a short test/after-hooks slot, while Worker Cleanup retains the
-        // larger project timeout configured by runInlineTest below.
-        test.setTimeout(120);
       });
     `,
   }, { timeout: 2000 });
