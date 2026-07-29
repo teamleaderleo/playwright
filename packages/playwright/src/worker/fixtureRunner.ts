@@ -23,7 +23,7 @@ import { formatLocation } from '../util';
 
 import { TimeoutManagerError } from './timeoutManager';
 import type { TestInfoImpl } from './testInfo';
-import type { FixtureDescription, RunnableDescription } from './timeoutManager';
+import type { FixtureDescription, RunnableDescription, TimeSlot } from './timeoutManager';
 import type { WorkerInfo } from '../../types/test';
 import type { Location } from '../../types/testReporter';
 
@@ -37,6 +37,7 @@ class Fixture {
   private _selfTeardownComplete: Promise<void> | undefined;
   private _setupDescription: FixtureDescription;
   private _teardownDescription: FixtureDescription;
+  private _teardownDeferred = false;
   private _stepInfo: { title: string, category: 'fixture', location?: Location, group?: string } | undefined;
   _deps = new Set<Fixture>();
   _usages = new Set<Fixture>();
@@ -135,20 +136,27 @@ class Fixture {
     await useFuncStarted;
   }
 
-  async teardown(testInfo: TestInfoImpl, runnable: RunnableDescription): Promise<boolean> {
-    const fixtureRunnable = { ...runnable, fixture: this._teardownDescription };
+  teardownWasDeferred() {
+    return this._teardownDeferred;
+  }
+
+  async teardown(testInfo: TestInfoImpl, runnable: RunnableDescription, retrySlot?: TimeSlot): Promise<boolean> {
+    const fixtureRunnable = retrySlot ? { ...runnable, slot: retrySlot, fixture: this._teardownDescription } : { ...runnable, fixture: this._teardownDescription };
     const isTimeExhausted = testInfo._timeoutManager.isTimeExhaustedFor(fixtureRunnable);
 
     // A test-scoped fixture without an explicit timeout shares the runnable slot.
     // During final test cleanup, keep it registered when that shared slot is
     // exhausted so that worker cleanup can retry it with a fresh slot. Hook
     // fixture scopes continue force-cleaning because later hooks may still run.
-    if (isTimeExhausted && runnable.type === 'test' && !this._teardownDescription.slot)
+    if (isTimeExhausted && runnable.type === 'test' && !this._teardownDescription.slot && !retrySlot) {
+      this._teardownDeferred = true;
       return false;
+    }
 
+    this._teardownDeferred = false;
     try {
       // Do not even start the teardown for a fixture that does not have any
-      // time remaining in its dedicated time slot. This avoids cascading timeouts.
+      // time remaining in the selected time slot. This avoids cascading timeouts.
       if (!isTimeExhausted) {
         const run = () => testInfo._runWithTimeout(fixtureRunnable, () => this._teardownInternal());
         if (this._stepInfo)
@@ -226,14 +234,38 @@ export class FixtureRunner {
     const collector = new Set<Fixture>();
     for (const fixture of allFixtures)
       fixture._collectFixturesInTeardownOrder(scope, collector);
+
+    // A worker-cleanup retry starts with fixtures that were deferred by an
+    // exhausted shared test slot. Divide the existing cleanup budget among those
+    // fixtures so one slow finalizer cannot prevent every later finalizer from
+    // starting. Unused time is carried forward through runnable.slot.elapsed.
+    const deferredFixtures = new Set(Array.from(collector).filter(fixture => fixture.teardownWasDeferred()));
+    let deferredRemaining = deferredFixtures.size;
+
     let firstError: Error | undefined;
     let skippedTeardown = false;
     for (const fixture of collector) {
+      let retrySlot: TimeSlot | undefined;
+      if (deferredFixtures.has(fixture)) {
+        if (runnable.slot && runnable.slot.timeout > 0) {
+          const remaining = Math.max(0, runnable.slot.timeout - runnable.slot.elapsed);
+          const allowance = Math.floor(remaining / deferredRemaining);
+          // TimeoutManager treats a 1ms slot as already exhausted because of its
+          // timer compensation. Use a separate allowance only when it can start.
+          if (allowance >= 2)
+            retrySlot = { timeout: allowance, elapsed: 0 };
+        }
+        --deferredRemaining;
+      }
+
       try {
-        const didTeardown = await fixture.teardown(testInfo, runnable);
+        const didTeardown = await fixture.teardown(testInfo, runnable, retrySlot);
         skippedTeardown = !didTeardown || skippedTeardown;
       } catch (error) {
         firstError = firstError ?? error;
+      } finally {
+        if (retrySlot && runnable.slot)
+          runnable.slot.elapsed += retrySlot.elapsed;
       }
     }
     if (scope === 'test')
@@ -244,9 +276,6 @@ export class FixtureRunner {
       const error = new TimeoutManagerError('Test timeout was exhausted before all test fixtures could be torn down.');
       if (!testInfo._isFailure()) {
         testInfo._failWithError(error);
-        // An expected test failure can keep status === expectedStatus even after
-        // another timeout error is recorded. Force worker replacement so the
-        // retained fixture receives the fresh worker-cleanup slot.
         if (!testInfo._isFailure())
           testInfo.status = 'timedOut';
       }
