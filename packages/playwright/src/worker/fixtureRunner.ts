@@ -27,6 +27,18 @@ import type { FixtureDescription, RunnableDescription, TimeSlot } from './timeou
 import type { WorkerInfo } from '../../types/test';
 import type { Location } from '../../types/testReporter';
 
+type FixtureTeardownState =
+  | 'completed'
+  | 'deferred'
+  | 'timed-out-after-start'
+  | 'failed-after-start'
+  | 'not-started-budget-exhausted';
+
+type FixtureTeardownResult = {
+  state: FixtureTeardownState;
+  error?: Error;
+};
+
 class Fixture {
   runner: FixtureRunner;
   registration: fixtures.FixtureRegistration;
@@ -140,7 +152,7 @@ class Fixture {
     return this._teardownDeferred;
   }
 
-  async teardown(testInfo: TestInfoImpl, runnable: RunnableDescription, retrySlot?: TimeSlot): Promise<boolean> {
+  async teardown(testInfo: TestInfoImpl, runnable: RunnableDescription, retrySlot?: TimeSlot): Promise<FixtureTeardownResult> {
     const fixtureRunnable = retrySlot ? { ...runnable, slot: retrySlot, fixture: this._teardownDescription } : { ...runnable, fixture: this._teardownDescription };
     const isTimeExhausted = testInfo._timeoutManager.isTimeExhaustedFor(fixtureRunnable);
 
@@ -150,19 +162,29 @@ class Fixture {
     // fixture scopes continue force-cleaning because later hooks may still run.
     if (isTimeExhausted && runnable.type === 'test' && !this._teardownDescription.slot && !retrySlot) {
       this._teardownDeferred = true;
-      return false;
+      return { state: 'deferred' };
     }
 
     this._teardownDeferred = false;
+    let result: FixtureTeardownResult = {
+      state: isTimeExhausted ? 'not-started-budget-exhausted' : 'completed',
+    };
     try {
       // Do not even start the teardown for a fixture that does not have any
       // time remaining in the selected time slot. This avoids cascading timeouts.
       if (!isTimeExhausted) {
         const run = () => testInfo._runWithTimeout(fixtureRunnable, () => this._teardownInternal());
-        if (this._stepInfo)
-          await testInfo._runAsStep(this._stepInfo, run);
-        else
-          await run();
+        try {
+          if (this._stepInfo)
+            await testInfo._runAsStep(this._stepInfo, run);
+          else
+            await run();
+        } catch (error) {
+          result = {
+            state: error instanceof TimeoutManagerError ? 'timed-out-after-start' : 'failed-after-start',
+            error: error as Error,
+          };
+        }
       }
     } finally {
       // To preserve fixtures integrity, forcefully cleanup fixtures
@@ -171,7 +193,7 @@ class Fixture {
         dep._usages.delete(this);
       this.runner.instanceForId.delete(this.registration.id);
     }
-    return true;
+    return result;
   }
 
   private async _teardownInternal() {
@@ -278,6 +300,7 @@ export class FixtureRunner {
     let unallocatedBudget = runnable.slot ? Math.max(0, runnable.slot.timeout - runnable.slot.elapsed) : 0;
     let unallocatedWeight = groups.reduce((total, group) => total + group.weight, 0);
 
+    const cleanupReceipt: { name: string, state: Exclude<FixtureTeardownState, 'deferred'> }[] = [];
     let firstError: Error | undefined;
     let skippedTeardown = false;
     for (const fixture of collector) {
@@ -293,10 +316,12 @@ export class FixtureRunner {
 
       const slotElapsedBefore = group?.slot?.elapsed ?? 0;
       try {
-        const didTeardown = await fixture.teardown(testInfo, runnable, group?.slot);
-        skippedTeardown = !didTeardown || skippedTeardown;
-      } catch (error) {
-        firstError = firstError ?? error;
+        const result = await fixture.teardown(testInfo, runnable, group?.slot);
+        if (result.error)
+          firstError = firstError ?? result.error;
+        skippedTeardown = result.state === 'deferred' || result.state === 'not-started-budget-exhausted' || skippedTeardown;
+        if (deferredFixtures.has(fixture) && result.state !== 'deferred')
+          cleanupReceipt.push({ name: fixture.registration.name, state: result.state });
       } finally {
         if (group?.slot && runnable.slot) {
           const elapsed = group.slot.elapsed - slotElapsedBefore;
@@ -307,6 +332,26 @@ export class FixtureRunner {
         }
       }
     }
+
+    if (cleanupReceipt.length) {
+      try {
+        await testInfo.attach('fixture-cleanup', {
+          body: Buffer.from(JSON.stringify({
+            version: 1,
+            phase: 'worker-cleanup',
+            budget: runnable.slot ? {
+              timeout: runnable.slot.timeout,
+              elapsed: runnable.slot.elapsed,
+            } : undefined,
+            fixtures: cleanupReceipt,
+          })),
+          contentType: 'application/json',
+        });
+      } catch (error) {
+        firstError = firstError ?? error as Error;
+      }
+    }
+
     if (scope === 'test')
       this.testScopeClean = !Array.from(this.instanceForId.values()).some(fixture => fixture.registration.scope === 'test');
     if (firstError)
