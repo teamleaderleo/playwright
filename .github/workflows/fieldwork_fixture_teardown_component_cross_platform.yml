@@ -1,0 +1,38 @@
+name: Fieldwork fixture teardown component cross-platform
+
+on:
+  push:
+    branches:
+      - fieldwork/fixture-teardown-component-cross-platform-ci
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-component-budget
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-fixture-teardown-component-cross-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-tests:
+    name: Component budget (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          browsers-to-install: chromium
+          bot-name: fieldwork-component-budget-${{ matrix.os }}
+          command: >-
+            npm run ttest --
+            tests/playwright-test/fixture-teardown-resumption.spec.ts
+            tests/playwright-test/fixture-teardown-fairness.spec.ts
+            tests/playwright-test/fixture-teardown-dependency-safety.spec.ts
+            --workers=1
