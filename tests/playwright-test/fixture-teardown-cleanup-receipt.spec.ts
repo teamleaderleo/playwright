@@ -16,6 +16,24 @@
 
 import { test, expect } from './playwright-test-fixtures';
 
+function fixtureStates(receipt: any, names: string[]) {
+  return receipt.fixtures
+      .filter((entry: any) => names.includes(entry.name))
+      .map((entry: any) => ({ name: entry.name, state: entry.state }));
+}
+
+function expectFixtureIdentities(receipt: any, names: string[]) {
+  const entries = receipt.fixtures.filter((entry: any) => names.includes(entry.name));
+  expect(entries).toHaveLength(names.length);
+  expect(new Set(entries.map((entry: any) => entry.id)).size).toBe(names.length);
+  for (const entry of entries) {
+    expect(entry.id).toEqual(expect.any(String));
+    expect(entry.location.file.endsWith('a.spec.ts')).toBe(true);
+    expect(entry.location.line).toEqual(expect.any(Number));
+    expect(entry.location.column).toEqual(expect.any(Number));
+  }
+}
+
 test('should report started and unstarted deferred fixture cleanup', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
@@ -55,15 +73,16 @@ test('should report started and unstarted deferred fixture cleanup', async ({ ru
   expect(result.output).not.toContain('Tearing down "child" exceeded the test timeout of');
 
   const reportTest = result.report.suites[0].specs[0].tests[0];
-  const receiptAttachment = reportTest.results[0].attachments.find(attachment => attachment.name === 'fixture-cleanup');
+  const receiptAttachment = reportTest.results[0].attachments.find(attachment => attachment.name === '_fixture-cleanup');
   expect(receiptAttachment?.contentType).toBe('application/json');
   const receipt = JSON.parse(Buffer.from(receiptAttachment!.body!, 'base64').toString('utf8'));
   expect(receipt.version).toBe(1);
-  expect(receipt.phase).toBe('worker-cleanup');
-  expect(receipt.fixtures.filter((entry: any) => entry.name === 'child' || entry.name === 'root')).toEqual([
+  expect(receipt.phase).toBe('deferred-test-fixture-recovery');
+  expect(fixtureStates(receipt, ['child', 'root'])).toEqual([
     { name: 'child', state: 'timed-out-after-start' },
     { name: 'root', state: 'not-started-budget-exhausted' },
   ]);
+  expectFixtureIdentities(receipt, ['child', 'root']);
 });
 
 test('should report completed and failed deferred fixture cleanup', async ({ runInlineTest }) => {
@@ -104,11 +123,13 @@ test('should report completed and failed deferred fixture cleanup', async ({ run
   expect(result.output).toContain('cleanup exploded');
 
   const reportTest = result.report.suites[0].specs[0].tests[0];
-  const receiptAttachment = reportTest.results[0].attachments.find(attachment => attachment.name === 'fixture-cleanup');
+  const receiptAttachment = reportTest.results[0].attachments.find(attachment => attachment.name === '_fixture-cleanup');
   expect(receiptAttachment?.contentType).toBe('application/json');
   const receipt = JSON.parse(Buffer.from(receiptAttachment!.body!, 'base64').toString('utf8'));
-  expect(receipt.fixtures.filter((entry: any) => entry.name === 'failedFixture' || entry.name === 'completedFixture')).toEqual([
+  expect(receipt.phase).toBe('deferred-test-fixture-recovery');
+  expect(fixtureStates(receipt, ['failedFixture', 'completedFixture'])).toEqual([
     { name: 'failedFixture', state: 'failed-after-start' },
     { name: 'completedFixture', state: 'completed' },
   ]);
+  expectFixtureIdentities(receipt, ['failedFixture', 'completedFixture']);
 });
