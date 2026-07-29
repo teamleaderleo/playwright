@@ -1,0 +1,35 @@
+name: Fieldwork fixture teardown cleanup receipts
+
+on:
+  push:
+    branches:
+      - fieldwork/fixture-teardown-cleanup-receipts-ci
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-cleanup-receipts
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-fixture-teardown-cleanup-receipts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-test:
+    name: Cleanup receipt regression stack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          browsers-to-install: chromium
+          bot-name: fieldwork-fixture-teardown-cleanup-receipts
+          command: >-
+            npm run ttest --
+            tests/playwright-test/fixture-teardown-resumption.spec.ts
+            tests/playwright-test/fixture-teardown-fairness.spec.ts
+            tests/playwright-test/fixture-teardown-dependency-safety.spec.ts
+            tests/playwright-test/fixture-teardown-cleanup-receipt.spec.ts
+            --workers=1
