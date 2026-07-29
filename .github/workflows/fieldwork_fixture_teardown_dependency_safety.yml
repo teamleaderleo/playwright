@@ -1,0 +1,32 @@
+name: Fieldwork fixture teardown dependency safety
+
+on:
+  push:
+    branches:
+      - fieldwork/fixture-teardown-dependency-safety-ci
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-dependency-safety-probe
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-fixture-teardown-dependency-safety-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-test:
+    name: Deferred dependency cleanup safety
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          browsers-to-install: chromium
+          bot-name: fieldwork-fixture-teardown-dependency-safety
+          command: >-
+            npm run ttest --
+            tests/playwright-test/fixture-teardown-dependency-safety.spec.ts
+            --workers=1
