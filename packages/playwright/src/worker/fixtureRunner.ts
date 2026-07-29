@@ -139,10 +139,10 @@ class Fixture {
     const isTimeExhausted = testInfo._timeoutManager.isTimeExhaustedFor(fixtureRunnable);
 
     // A test-scoped fixture without an explicit timeout shares the runnable slot.
-    // Keep it registered when that shared slot is exhausted so that worker cleanup
-    // can retry it with a fresh slot. Fixtures with dedicated slots retain the
-    // existing force-cleanup behaviour because another runnable slot cannot help.
-    if (isTimeExhausted && !this._teardownDescription.slot)
+    // During final test cleanup, keep it registered when that shared slot is
+    // exhausted so that worker cleanup can retry it with a fresh slot. Hook
+    // fixture scopes continue force-cleaning because later hooks may still run.
+    if (isTimeExhausted && runnable.type === 'test' && !this._teardownDescription.slot)
       return false;
 
     try {
@@ -229,7 +229,8 @@ export class FixtureRunner {
     let skippedTeardown = false;
     for (const fixture of collector) {
       try {
-        skippedTeardown = !await fixture.teardown(testInfo, runnable) || skippedTeardown;
+        const didTeardown = await fixture.teardown(testInfo, runnable);
+        skippedTeardown = !didTeardown || skippedTeardown;
       } catch (error) {
         firstError = firstError ?? error;
       }
