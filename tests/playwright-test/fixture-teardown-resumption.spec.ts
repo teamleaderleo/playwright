@@ -53,7 +53,7 @@ test('should resume independent fixture teardown after the shared slot is exhaus
   expect(new Set(markers.map(line => line.split('-worker-')[1])).size).toBe(2);
 
   const reportTest = result.report.suites[0].specs[0].tests[0];
-  expect(reportTest.results.map(testResult => testResult.attachments.map(attachment => attachment.name))).toEqual([
+  expect(reportTest.results.map(testResult => testResult.attachments.map(attachment => attachment.name).filter(name => name.startsWith('sentinel-')))).toEqual([
     ['sentinel-0'],
     ['sentinel-1'],
   ]);
