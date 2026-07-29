@@ -122,6 +122,36 @@ test('should resume fixture teardown after afterEach exhausts the shared slot', 
   ]);
 });
 
+test('should replace the worker when cleanup debt follows an expected failure', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test as base, expect } from '@playwright/test';
+
+      const test = base.extend({
+        sentinel: async ({}, use, testInfo) => {
+          await use();
+          console.log('%%sentinel-' + testInfo.retry + '-worker-' + testInfo.workerIndex);
+        },
+      });
+
+      test.afterEach(async () => {
+        await new Promise(f => setTimeout(f, 1000));
+      });
+
+      test('expected body failure', async ({ sentinel }) => {
+        test.fail();
+        expect(1).toBe(2);
+      });
+    `,
+  }, { timeout: 100, retries: 1 });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+  const markers = result.outputLines.filter(line => line.startsWith('sentinel-'));
+  expect(markers).toHaveLength(2);
+  expect(new Set(markers.map(line => line.split('-worker-')[1])).size).toBe(2);
+});
+
 test('should not retain a hook-scoped fixture for the next afterAll hook', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'a.spec.ts': `
