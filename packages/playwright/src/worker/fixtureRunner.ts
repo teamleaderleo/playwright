@@ -242,7 +242,14 @@ export class FixtureRunner {
       throw firstError;
     if (skippedTeardown) {
       const error = new TimeoutManagerError('Test timeout was exhausted before all test fixtures could be torn down.');
-      testInfo._failWithError(error);
+      if (!testInfo._isFailure()) {
+        testInfo._failWithError(error);
+        // An expected test failure can keep status === expectedStatus even after
+        // another timeout error is recorded. Force worker replacement so the
+        // retained fixture receives the fresh worker-cleanup slot.
+        if (!testInfo._isFailure())
+          testInfo.status = 'timedOut';
+      }
       throw error;
     }
   }
