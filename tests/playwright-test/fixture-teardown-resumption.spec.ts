@@ -121,3 +121,42 @@ test('should resume fixture teardown after afterEach exhausts the shared slot', 
     'sentinel-1',
   ]);
 });
+
+test('should not retain a hook-scoped fixture for the next afterAll hook', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test as base } from '@playwright/test';
+
+      let setupCount = 0;
+      const test = base.extend({
+        resource: async ({}, use) => {
+          const value = ++setupCount;
+          console.log('%%setup-' + value);
+          await use(value);
+          console.log('%%teardown-' + value);
+        },
+      });
+
+      test.afterAll(async ({ resource }) => {
+        console.log('%%first-hook-' + resource);
+        await new Promise(f => setTimeout(f, 1000));
+      });
+
+      test.afterAll(async ({ resource }) => {
+        console.log('%%second-hook-' + resource);
+      });
+
+      test('passes', async () => {
+      });
+    `,
+  }, { timeout: 100 });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.outputLines.filter(line => /^(setup|first-hook|second-hook|teardown)-/.test(line))).toEqual([
+    'setup-1',
+    'first-hook-1',
+    'setup-2',
+    'second-hook-2',
+    'teardown-2',
+  ]);
+});
