@@ -153,7 +153,8 @@ class Fixture {
   }
 
   async teardown(testInfo: TestInfoImpl, runnable: RunnableDescription, retrySlot?: TimeSlot): Promise<FixtureTeardownResult> {
-    const fixtureRunnable = retrySlot ? { ...runnable, slot: retrySlot, fixture: this._teardownDescription } : { ...runnable, fixture: this._teardownDescription };
+    const fixtureDescription = retrySlot ? { ...this._teardownDescription, recovery: true } : this._teardownDescription;
+    const fixtureRunnable = retrySlot ? { ...runnable, slot: retrySlot, fixture: fixtureDescription } : { ...runnable, fixture: fixtureDescription };
     const isTimeExhausted = testInfo._timeoutManager.isTimeExhaustedFor(fixtureRunnable);
 
     // A test-scoped fixture without an explicit timeout shares the runnable slot.
