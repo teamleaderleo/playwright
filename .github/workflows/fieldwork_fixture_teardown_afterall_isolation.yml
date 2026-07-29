@@ -1,0 +1,32 @@
+name: Fieldwork fixture teardown afterAll isolation
+
+on:
+  push:
+    branches:
+      - fieldwork/fixture-teardown-afterall-isolation-ci
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-afterall-isolation-probe
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-fixture-teardown-afterall-isolation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-test:
+    name: AfterAll isolation probe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          browsers-to-install: chromium
+          bot-name: fieldwork-fixture-teardown-afterall-isolation
+          command: >-
+            npm run ttest --
+            tests/playwright-test/fixture-teardown-afterall-isolation.spec.ts
+            --workers=1
