@@ -51,6 +51,8 @@ test('should report started and unstarted deferred fixture cleanup', async ({ ru
   expect(result.outputLines.filter(line => line === 'child-finalizer-started' || line === 'child-finalizer-finished' || line === 'root-closed')).toEqual([
     'child-finalizer-started',
   ]);
+  expect(result.output).toContain('Fixture recovery allocation of');
+  expect(result.output).not.toContain('Tearing down "child" exceeded the test timeout of');
 
   const reportTest = result.report.suites[0].specs[0].tests[0];
   const receiptAttachment = reportTest.results[0].attachments.find(attachment => attachment.name === 'fixture-cleanup');
