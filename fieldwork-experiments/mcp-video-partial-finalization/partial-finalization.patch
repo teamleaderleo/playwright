@@ -1,0 +1,246 @@
+diff --git a/packages/playwright-core/src/tools/backend/context.ts b/packages/playwright-core/src/tools/backend/context.ts
+--- a/packages/playwright-core/src/tools/backend/context.ts
++++ b/packages/playwright-core/src/tools/backend/context.ts
+@@ -91,6 +91,21 @@ export type FilenameTemplate = {
+ 
+ type VideoParams = { size?: { width: number; height: number } };
+ 
++export type VideoRecordingResult = {
++  fileName: string;
++  error?: string;
++};
++
++type VideoRecordingEntry = {
++  page: playwrightTypes.Page;
++  fileName: string;
++  startPromise: Promise<void>;
++};
++
++type VideoSession = {
++  params: VideoParams;
++  fileName: string;
++  recordings: VideoRecordingEntry[];
++};
++
+ export class Context {
+   readonly config: ContextConfig;
+   readonly sessionLog: SessionLog | undefined;
+@@ -101,11 +116,8 @@ export class Context {
+   private _tabs: Tab[] = [];
+   private _currentTab: Tab | undefined;
+   private _routes: RouteEntry[] = [];
+-  private _video: {
+-    params: VideoParams;
+-    fileNames: string[];
+-    fileName: string;
+-  } | undefined;
++  private _video: VideoSession | undefined;
++  private _videoStopTask: Promise<VideoRecordingResult[]> | undefined;
+   private _disposables: Disposable[] = [];
+ 
+   private _runningToolName: string | undefined;
+@@ -215,38 +227,69 @@ export class Context {
+   }
+ 
+   async startVideoRecording(fileName: string, params: VideoParams) {
+-    if (this._video)
++    if (this._video || this._videoStopTask)
+       throw new Error('Video recording has already been started.');
+-    this._video = { params, fileName, fileNames: [] };
++    this._video = { params, fileName, recordings: [] };
+     const browserContext = await this.ensureBrowserContext();
+-    for (const page of browserContext.pages())
+-      await this._startPageVideo(page);
++    try {
++      for (const page of browserContext.pages())
++        await this._startPageVideo(page);
++    } catch (error) {
++      await this.stopVideoRecording();
++      throw error;
++    }
+   }
+ 
+-  async stopVideoRecording(): Promise<string[]> {
++  async stopVideoRecording(): Promise<VideoRecordingResult[]> {
++    if (this._videoStopTask)
++      return await this._videoStopTask;
+     if (!this._video)
+       return [];
+     const video = this._video;
+-    for (const page of this._rawBrowserContext.pages())
+-      await page.screencast.stop();
+     this._video = undefined;
+-    return [...video.fileNames];
++    this._videoStopTask = this._stopVideoSession(video);
++    try {
++      return await this._videoStopTask;
++    } finally {
++      this._videoStopTask = undefined;
++    }
++  }
++
++  private async _stopVideoSession(video: VideoSession): Promise<VideoRecordingResult[]> {
++    return await Promise.all(video.recordings.map(async recording => {
++      try {
++        await recording.startPromise;
++        if (!recording.page.isClosed())
++          await recording.page.screencast.stop();
++        const stat = await fs.promises.stat(recording.fileName);
++        if (!stat.isFile())
++          throw new Error(`Video output is not a file: ${recording.fileName}`);
++        return { fileName: recording.fileName };
++      } catch (error) {
++        return {
++          fileName: recording.fileName,
++          error: error instanceof Error ? error.stack ?? error.message : String(error),
++        };
++      }
++    }));
+   }
+ 
+   private async _startPageVideo(page: playwrightTypes.Page) {
+-    if (!this._video)
++    const video = this._video;
++    if (!video)
+       return;
+-    const suffix = this._video.fileNames.length ? `-${this._video.fileNames.length}` : '';
+-    let fileName = this._video.fileName;
++    const suffix = video.recordings.length ? `-${video.recordings.length}` : '';
++    let fileName = video.fileName;
+     if (fileName && suffix) {
+       const dir = path.dirname(fileName);
+       const ext = path.extname(fileName);
+       fileName = path.join(dir, path.basename(fileName, ext) + suffix + ext);
+     }
+-    this._video.fileNames.push(fileName);
+-    await page.screencast.start({ path: fileName, ...this._video.params });
++    const startPromise = page.screencast.start({ path: fileName, ...video.params });
++    video.recordings.push({ page, fileName, startPromise });
++    await startPromise;
+   }
+ 
+   private _onPageCreated(page: playwrightTypes.Page) {
+diff --git a/packages/playwright-core/src/tools/backend/video.ts b/packages/playwright-core/src/tools/backend/video.ts
+--- a/packages/playwright-core/src/tools/backend/video.ts
++++ b/packages/playwright-core/src/tools/backend/video.ts
+@@ -55,18 +55,23 @@ const videoStop = defineTool({
+   },
+ 
+   handle: async (context, params, response) => {
+-    const fileNames = await context.stopVideoRecording();
+-    if (!fileNames.length) {
++    const results = await context.stopVideoRecording();
++    if (!results.length) {
+       response.addTextResult('No videos were recorded.');
+       return;
+     }
+-    for (const fileName of fileNames) {
++    for (const result of results) {
++      if (result.error) {
++        response.addError(`Failed to finalize video "${result.fileName}":\n${result.error}`);
++        continue;
++      }
+       const resolvedFile = await response.resolveClientFile({
+         prefix: 'video',
+         ext: 'webm',
+-        suggestedFilename: fileName
++        suggestedFilename: result.fileName
+       }, 'Video');
+       await response.addFileResult(resolvedFile, null);
+     }
+   },
+ });
+diff --git a/tests/mcp/video.spec.ts b/tests/mcp/video.spec.ts
+--- a/tests/mcp/video.spec.ts
++++ b/tests/mcp/video.spec.ts
+@@ -140,6 +140,93 @@ test.describe('action overlays', () => {
+   });
+ });
+ 
++test.describe('explicit video recording', () => {
++  test.use({ mcpCaps: ['devtools'] });
++
++  test('reports a completed recording when another recording fails to finalize', async ({ client }, testInfo) => {
++    const firstTab = await client.callTool({
++      name: 'browser_tabs',
++      arguments: { action: 'new' },
++    });
++    expect(firstTab.isError).toBeFalsy();
++
++    const start = await client.callTool({
++      name: 'browser_start_video',
++      arguments: { filename: 'video.webm' },
++    });
++    expect(start.isError).toBeFalsy();
++    await produceFrames(client);
++
++    await fs.promises.mkdir(testInfo.outputPath('video-1.webm'));
++    const secondTab = await client.callTool({
++      name: 'browser_tabs',
++      arguments: { action: 'new' },
++    });
++    expect(secondTab.isError).toBeFalsy();
++    await produceFrames(client);
++
++    const stop = await client.callTool({
++      name: 'browser_stop_video',
++      arguments: {},
++    });
++
++    const firstVideo = testInfo.outputPath('video.webm');
++    const firstVideoStat = await fs.promises.stat(firstVideo);
++    expect(firstVideoStat.isFile()).toBeTruthy();
++    expect(firstVideoStat.size).toBeGreaterThan(0);
++
++    const text = stop.content[0].type === 'text' ? stop.content[0].text : '';
++    expect(stop.isError).toBeTruthy();
++    expect(text).toContain('video.webm');
++    expect(text).toContain('video-1.webm');
++
++    const repeatedStop = await client.callTool({
++      name: 'browser_stop_video',
++      arguments: {},
++    });
++    const repeatedText = repeatedStop.content[0].type === 'text' ? repeatedStop.content[0].text : '';
++    expect(repeatedStop.isError).toBeFalsy();
++    expect(repeatedText).toContain('No videos were recorded.');
++  });
++
++  test('reports every recording when all recordings finalize', async ({ client }, testInfo) => {
++    const firstTab = await client.callTool({
++      name: 'browser_tabs',
++      arguments: { action: 'new' },
++    });
++    expect(firstTab.isError).toBeFalsy();
++
++    const start = await client.callTool({
++      name: 'browser_start_video',
++      arguments: { filename: 'all-success.webm' },
++    });
++    expect(start.isError).toBeFalsy();
++    await produceFrames(client);
++
++    const secondTab = await client.callTool({
++      name: 'browser_tabs',
++      arguments: { action: 'new' },
++    });
++    expect(secondTab.isError).toBeFalsy();
++    await produceFrames(client);
++
++    const stop = await client.callTool({
++      name: 'browser_stop_video',
++      arguments: {},
++    });
++    const text = stop.content[0].type === 'text' ? stop.content[0].text : '';
++
++    expect(stop.isError).toBeFalsy();
++    expect(text).toContain('all-success.webm');
++    expect(text).toContain('all-success-1.webm');
++    expect((await fs.promises.stat(testInfo.outputPath('all-success.webm'))).size).toBeGreaterThan(0);
++    expect((await fs.promises.stat(testInfo.outputPath('all-success-1.webm'))).size).toBeGreaterThan(0);
++  });
++});
++
+ async function produceFrames(client: Client) {
+   expect(await client.callTool({
+     name: 'browser_evaluate',
