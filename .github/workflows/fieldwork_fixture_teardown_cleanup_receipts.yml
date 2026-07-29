@@ -1,5 +1,6 @@
 name: Fieldwork fixture teardown cleanup receipts
 
+# Fork-only execution harness for Fieldwork issue #26.
 on:
   push:
     branches:
