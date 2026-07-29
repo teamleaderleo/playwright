@@ -1,0 +1,34 @@
+name: Fieldwork fixture teardown component budget
+
+on:
+  push:
+    branches:
+      - fieldwork/fixture-teardown-component-budget-ci
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-component-budget
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-fixture-teardown-component-budget-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-tests:
+    name: Fixture teardown component budget
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          browsers-to-install: chromium
+          bot-name: fieldwork-fixture-teardown-component-budget
+          command: >-
+            npm run ttest --
+            tests/playwright-test/fixture-teardown-resumption.spec.ts
+            tests/playwright-test/fixture-teardown-fairness.spec.ts
+            tests/playwright-test/fixture-teardown-dependency-safety.spec.ts
+            --workers=1
