@@ -30,8 +30,9 @@ test('should not tear down a dependency while a timed-out child finalizer is sti
         },
         child: async ({ root }, use) => {
           await use();
+          console.log('%%child-finalizer-started');
           await new Promise(f => setTimeout(f, 80));
-          console.log('%%child-saw-root-' + (root.isClosed() ? 'closed' : 'open'));
+          console.log('%%child-finished-root-' + (root.isClosed() ? 'closed' : 'open'));
         },
       });
 
@@ -46,8 +47,9 @@ test('should not tear down a dependency while a timed-out child finalizer is sti
 
   expect(result.exitCode).toBe(1);
   expect(result.failed).toBe(1);
-  expect(result.outputLines.filter(line => line === 'root-closed' || line.startsWith('child-saw-root-'))).toEqual([
-    'child-saw-root-open',
+  expect(result.outputLines.filter(line => line === 'child-finalizer-started' || line === 'root-closed' || line.startsWith('child-finished-root-'))).toEqual([
+    'child-finalizer-started',
+    'child-finished-root-open',
     'root-closed',
   ]);
 });
