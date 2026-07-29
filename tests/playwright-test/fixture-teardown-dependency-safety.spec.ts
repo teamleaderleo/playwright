@@ -41,9 +41,12 @@ test('should not tear down a dependency while a timed-out child finalizer is sti
       });
 
       test('passes its body', async ({ child }) => {
+        // Exhaust a short test/after-hooks slot, while Worker Cleanup retains the
+        // larger project timeout configured by runInlineTest below.
+        test.setTimeout(120);
       });
     `,
-  }, { timeout: 120 });
+  }, { timeout: 2000 });
 
   expect(result.exitCode).toBe(1);
   expect(result.failed).toBe(1);
