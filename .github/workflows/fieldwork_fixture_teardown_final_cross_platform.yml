@@ -1,0 +1,40 @@
+name: Fieldwork final fixture cleanup cross-platform
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-internal-receipt
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-final-fixture-cleanup-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          browsers-to-install: chromium
+          bot-name: fieldwork-final-fixture-cleanup-${{ matrix.os }}
+          command: >-
+            npm run ttest --
+            tests/playwright-test/fixture-teardown-resumption.spec.ts
+            tests/playwright-test/fixture-teardown-fairness.spec.ts
+            tests/playwright-test/fixture-teardown-dependency-safety.spec.ts
+            tests/playwright-test/fixture-teardown-cleanup-receipt.spec.ts
+            tests/playwright-test/fixture-teardown-afterall-isolation.spec.ts
+            --workers=1
