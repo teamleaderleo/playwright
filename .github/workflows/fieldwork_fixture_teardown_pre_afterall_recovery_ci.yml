@@ -1,0 +1,36 @@
+name: Fieldwork pre-afterAll recovery regression stack
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-pre-afterall-recovery
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-pre-afterall-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-test:
+    name: Pre-afterAll recovery regression stack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          browsers-to-install: chromium
+          bot-name: fieldwork-pre-afterall-recovery
+          command: >-
+            bash -c 'npm run ttest --
+            tests/playwright-test/fixture-teardown-resumption.spec.ts
+            tests/playwright-test/fixture-teardown-fairness.spec.ts
+            tests/playwright-test/fixture-teardown-dependency-safety.spec.ts
+            tests/playwright-test/fixture-teardown-cleanup-receipt.spec.ts
+            tests/playwright-test/fixture-teardown-afterall-isolation.spec.ts
+            --workers=1 &&
+            npm run ttest -- tests/playwright-test/timeout.spec.ts
+            -g "should run fixture teardown with custom timeout after afterEach timeout"
+            --workers=1'
