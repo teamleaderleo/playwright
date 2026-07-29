@@ -198,6 +198,14 @@ class Fixture {
   }
 }
 
+type DeferredFixtureGroup = {
+  fixtures: Set<Fixture>;
+  weight: number;
+  fixturesRemaining: number;
+  allowance: number;
+  slot?: TimeSlot;
+};
+
 export class FixtureRunner {
   private testScopeClean = true;
   pool: fixtures.FixturePool | undefined;
@@ -235,37 +243,68 @@ export class FixtureRunner {
     for (const fixture of allFixtures)
       fixture._collectFixturesInTeardownOrder(scope, collector);
 
-    // A worker-cleanup retry starts with fixtures that were deferred by an
-    // exhausted shared test slot. Divide the existing cleanup budget among those
-    // fixtures so one slow finalizer cannot prevent every later finalizer from
-    // starting. Unused time is carried forward through runnable.slot.elapsed.
+    // A timed-out teardown callback keeps running after the timeout race rejects.
+    // Budget deferred recovery by connected dependency groups so a timed-out child
+    // cannot cause its resource-owning dependency to start teardown concurrently.
+    // Independent groups still receive bounded shares, weighted by fixture count.
     const deferredFixtures = new Set(Array.from(collector).filter(fixture => fixture.teardownWasDeferred()));
-    let deferredRemaining = deferredFixtures.size;
+    const groupByFixture = new Map<Fixture, DeferredFixtureGroup>();
+    const groups: DeferredFixtureGroup[] = [];
+    const collectGroup = (fixture: Fixture, fixturesInGroup: Set<Fixture>) => {
+      if (!deferredFixtures.has(fixture) || fixturesInGroup.has(fixture))
+        return;
+      fixturesInGroup.add(fixture);
+      for (const dep of fixture._deps)
+        collectGroup(dep, fixturesInGroup);
+      for (const usage of fixture._usages)
+        collectGroup(usage, fixturesInGroup);
+    };
+    for (const fixture of collector) {
+      if (!deferredFixtures.has(fixture) || groupByFixture.has(fixture))
+        continue;
+      const fixturesInGroup = new Set<Fixture>();
+      collectGroup(fixture, fixturesInGroup);
+      const group: DeferredFixtureGroup = {
+        fixtures: fixturesInGroup,
+        weight: fixturesInGroup.size,
+        fixturesRemaining: fixturesInGroup.size,
+        allowance: 0,
+      };
+      groups.push(group);
+      for (const groupedFixture of fixturesInGroup)
+        groupByFixture.set(groupedFixture, group);
+    }
+
+    let unallocatedBudget = runnable.slot ? Math.max(0, runnable.slot.timeout - runnable.slot.elapsed) : 0;
+    let unallocatedWeight = groups.reduce((total, group) => total + group.weight, 0);
 
     let firstError: Error | undefined;
     let skippedTeardown = false;
     for (const fixture of collector) {
-      let retrySlot: TimeSlot | undefined;
-      if (deferredFixtures.has(fixture)) {
-        if (runnable.slot && runnable.slot.timeout > 0) {
-          const remaining = Math.max(0, runnable.slot.timeout - runnable.slot.elapsed);
-          const allowance = Math.floor(remaining / deferredRemaining);
-          // TimeoutManager treats a 1ms slot as already exhausted because of its
-          // timer compensation. Use a separate allowance only when it can start.
-          if (allowance >= 2)
-            retrySlot = { timeout: allowance, elapsed: 0 };
-        }
-        --deferredRemaining;
+      const group = groupByFixture.get(fixture);
+      if (group && !group.slot) {
+        group.allowance = unallocatedWeight ? Math.floor(unallocatedBudget * group.weight / unallocatedWeight) : 0;
+        unallocatedBudget -= group.allowance;
+        unallocatedWeight -= group.weight;
+        // A zero timeout disables timeout enforcement. Represent an allocation
+        // too small to start as an already-exhausted one millisecond slot.
+        group.slot = group.allowance >= 2 ? { timeout: group.allowance, elapsed: 0 } : { timeout: 1, elapsed: 1 };
       }
 
+      const slotElapsedBefore = group?.slot?.elapsed ?? 0;
       try {
-        const didTeardown = await fixture.teardown(testInfo, runnable, retrySlot);
+        const didTeardown = await fixture.teardown(testInfo, runnable, group?.slot);
         skippedTeardown = !didTeardown || skippedTeardown;
       } catch (error) {
         firstError = firstError ?? error;
       } finally {
-        if (retrySlot && runnable.slot)
-          runnable.slot.elapsed += retrySlot.elapsed;
+        if (group?.slot && runnable.slot) {
+          const elapsed = group.slot.elapsed - slotElapsedBefore;
+          runnable.slot.elapsed += elapsed;
+          --group.fixturesRemaining;
+          if (!group.fixturesRemaining)
+            unallocatedBudget += Math.max(0, group.allowance - group.slot.elapsed);
+        }
       }
     }
     if (scope === 'test')
