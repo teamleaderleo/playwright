@@ -1,0 +1,29 @@
+name: Fieldwork expected-failure cleanup probe
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-expected-failure-cleanup-probe
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-expected-failure-cleanup-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-runner-test:
+    name: Expected-failure cleanup probe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: 22
+          browsers-to-install: chromium
+          bot-name: fieldwork-expected-failure-cleanup
+          command: >-
+            npm run ttest --
+            tests/playwright-test/fixture-teardown-expected-failure.spec.ts
+            --workers=1
