@@ -17,11 +17,22 @@
 import fs from 'fs';
 import path from 'path';
 
+import { extractZip } from '../../packages/utils/third_party/extractZip';
 import { test, expect } from './playwright-test-fixtures';
 
-test('should retain a recoverable blob journal when the process exits before onEnd', async ({ runInlineTest }) => {
-  const reportDir = test.info().outputPath('blob-report');
+const passingTest = {
+  'a.spec.ts': `
+    import { test, expect } from '@playwright/test';
+    test('passes before reporter finalization', async () => {
+      expect(1 + 1).toBe(2);
+    });
+  `,
+};
+
+test('creates no replayable blob before onEnd', async ({ runInlineTest }) => {
+  const reportDir = test.info().outputPath('before-on-end');
   const result = await runInlineTest({
+    ...passingTest,
     'exit-reporter.js': `
       class ExitReporter {
         onTestEnd() {
@@ -39,14 +50,81 @@ test('should retain a recoverable blob journal when the process exits before onE
         ],
       };
     `,
-    'a.spec.ts': `
-      import { test, expect } from '@playwright/test';
-      test('passes before abrupt reporter exit', async () => {
-        expect(1 + 1).toBe(2);
-      });
-    `,
   });
 
   expect(result.exitCode).toBe(93);
-  expect(fs.existsSync(path.join(reportDir, 'report.partial.jsonl'))).toBeTruthy();
+  expect(await filesIfPresent(reportDir)).toEqual([]);
 });
+
+test('leaves the final zip path non-replayable when interrupted as writing starts', async ({ runInlineTest }) => {
+  const reportDir = test.info().outputPath('during-on-end');
+  const result = await runInlineTest({
+    ...passingTest,
+    'interrupt-reporter.js': `
+      class InterruptReporter {
+        onBegin() {
+          const fs = require('fs');
+          const originalCreateWriteStream = fs.createWriteStream;
+          fs.createWriteStream = function(file, ...args) {
+            const stream = originalCreateWriteStream.call(fs, file, ...args);
+            if (String(file).endsWith('.zip'))
+              stream.once('open', () => process.exit(94));
+            return stream;
+          };
+        }
+      }
+      module.exports = InterruptReporter;
+    `,
+    'playwright.config.ts': `
+      module.exports = {
+        workers: 1,
+        reporter: [
+          ['blob', { outputDir: ${JSON.stringify(reportDir)} }],
+          ['./interrupt-reporter.js'],
+        ],
+      };
+    `,
+  });
+
+  expect(result.exitCode).toBe(94);
+  const reportFiles = await filesIfPresent(reportDir);
+  expect(reportFiles).toHaveLength(1);
+  expect(reportFiles[0]).toMatch(/\.zip$/);
+
+  const zipFile = path.join(reportDir, reportFiles[0]);
+  const extractDir = test.info().outputPath('during-on-end-extracted');
+  await expect(extractZip(zipFile, extractDir)).rejects.toThrow();
+});
+
+test('creates a replayable blob after onEnd completes', async ({ runInlineTest }) => {
+  const reportDir = test.info().outputPath('after-on-end');
+  const result = await runInlineTest({
+    ...passingTest,
+    'playwright.config.ts': `
+      module.exports = {
+        workers: 1,
+        reporter: [['blob', { outputDir: ${JSON.stringify(reportDir)} }]],
+      };
+    `,
+  });
+
+  expect(result.exitCode).toBe(0);
+  const reportFiles = await filesIfPresent(reportDir);
+  expect(reportFiles).toHaveLength(1);
+  expect(reportFiles[0]).toMatch(/\.zip$/);
+
+  const extractDir = test.info().outputPath('after-on-end-extracted');
+  await extractZip(path.join(reportDir, reportFiles[0]), extractDir);
+  const reportJsonl = path.join(extractDir, 'report.jsonl');
+  expect((await fs.promises.stat(reportJsonl)).size).toBeGreaterThan(0);
+});
+
+async function filesIfPresent(dir: string): Promise<string[]> {
+  try {
+    return (await fs.promises.readdir(dir)).sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+      return [];
+    throw error;
+  }
+}
