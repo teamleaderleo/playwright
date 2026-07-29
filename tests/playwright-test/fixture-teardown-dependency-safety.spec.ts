@@ -34,17 +34,17 @@ test('should not tear down a dependency while a timed-out child finalizer is sti
         child: async ({ root }, use) => {
           await use();
           console.log('%%child-finalizer-started');
-          await new Promise(f => setTimeout(f, 80));
+          // This is longer than the observed equal per-fixture share, but shorter
+          // than the two-fixture dependency-group share of the same 2s budget.
+          await new Promise(f => setTimeout(f, 100));
           console.log('%%child-finished-root-' + (root.isClosed() ? 'closed' : 'open'));
         },
       });
 
-      // Exhaust a short full test lifecycle slot, while Worker Cleanup retains
-      // the larger project timeout from playwright.config.ts.
-      test.describe.configure({ timeout: 120 });
-
       test.afterEach(async () => {
-        await new Promise(f => setTimeout(f, 1000));
+        // Exhaust the original 2s After Hooks slot. Worker Cleanup receives a
+        // fresh 2s slot with the same active fixture graph.
+        await new Promise(f => setTimeout(f, 3000));
       });
 
       test('passes its body', async ({ child }) => {
