@@ -1,0 +1,17 @@
+name: Trigger Fieldwork fixture cleanup source publication
+
+on:
+  push:
+    branches:
+      - fieldwork/fixture-teardown-clean-separation-source
+    paths:
+      - .github/workflows/fieldwork_publish_fixture_cleanup_separation_trigger.yml
+
+permissions:
+  contents: read
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo source publication triggered
