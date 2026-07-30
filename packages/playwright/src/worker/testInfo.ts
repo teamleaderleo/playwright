@@ -106,6 +106,7 @@ export class TestInfoImpl implements TestInfo {
   _onUserStepEnd?: () => Promise<void>;
   _hasNonRetriableError = false;
   _hasUnhandledError = false;
+  _hasIncompleteFixtureCleanup = false;
   _allowSkips = false;
 
   // ------------ Main methods ------------

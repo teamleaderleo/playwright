@@ -491,7 +491,7 @@ export class WorkerMain extends ProcessRunner {
         throw firstAfterHooksError;
     }).catch(() => {});  // Ignore the top-level error, it is already inside TestInfo.errors.
 
-    if (testInfo._isFailure())
+    if (testInfo._isFailure() || testInfo._hasIncompleteFixtureCleanup)
       this._isStopped = true;
 
     if (this._isStopped) {
