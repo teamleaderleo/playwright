@@ -159,8 +159,9 @@ class Fixture {
 
     // A test-scoped fixture without an explicit timeout shares the runnable slot.
     // During final test cleanup, keep it registered when that shared slot is
-    // exhausted so that worker cleanup can retry it with a fresh slot. Hook
-    // fixture scopes continue force-cleaning because later hooks may still run.
+    // exhausted so that bounded recovery can retry it before afterAll resolves
+    // fixtures. Hook fixture scopes continue force-cleaning because later hooks
+    // may still run.
     if (isTimeExhausted && runnable.type === 'test' && !this._teardownDescription.slot && !retrySlot) {
       this._teardownDeferred = true;
       return { state: 'deferred' };
@@ -304,6 +305,7 @@ export class FixtureRunner {
     const cleanupReceipt: { id: string, name: string, location: Location, state: Exclude<FixtureTeardownState, 'deferred'> }[] = [];
     let firstError: Error | undefined;
     let skippedTeardown = false;
+    let incompleteDeferredCleanup = false;
     for (const fixture of collector) {
       const group = groupByFixture.get(fixture);
       if (group && !group.slot) {
@@ -321,8 +323,10 @@ export class FixtureRunner {
         if (result.error)
           firstError = firstError ?? result.error;
         skippedTeardown = result.state === 'deferred' || result.state === 'not-started-budget-exhausted' || skippedTeardown;
-        if (deferredFixtures.has(fixture) && result.state !== 'deferred')
+        if (deferredFixtures.has(fixture) && result.state !== 'deferred') {
           cleanupReceipt.push({ id: fixture.registration.id, name: fixture.registration.name, location: fixture.registration.location, state: result.state });
+          incompleteDeferredCleanup = result.state !== 'completed' || incompleteDeferredCleanup;
+        }
       } finally {
         if (group?.slot && runnable.slot) {
           const elapsed = group.slot.elapsed - slotElapsedBefore;
@@ -355,15 +359,14 @@ export class FixtureRunner {
 
     if (scope === 'test')
       this.testScopeClean = !Array.from(this.instanceForId.values()).some(fixture => fixture.registration.scope === 'test');
+    if (incompleteDeferredCleanup)
+      testInfo._hasIncompleteFixtureCleanup = true;
     if (firstError)
       throw firstError;
     if (skippedTeardown) {
       const error = new TimeoutManagerError('Test timeout was exhausted before all test fixtures could be torn down.');
-      if (!testInfo._isFailure()) {
+      if (!testInfo._isFailure())
         testInfo._failWithError(error);
-        if (!testInfo._isFailure())
-          testInfo.status = 'timedOut';
-      }
       throw error;
     }
   }

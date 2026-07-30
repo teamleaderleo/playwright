@@ -122,7 +122,7 @@ test('should resume fixture teardown after afterEach exhausts the shared slot', 
   ]);
 });
 
-test('should replace the worker when cleanup debt follows an expected failure', async ({ runInlineTest }) => {
+test('should not force retry when deferred cleanup recovers after an expected body failure', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'a.spec.ts': `
       import { test as base, expect } from '@playwright/test';
@@ -145,11 +145,51 @@ test('should replace the worker when cleanup debt follows an expected failure', 
     `,
   }, { timeout: 100, retries: 1 });
 
-  expect(result.exitCode).toBe(1);
-  expect(result.failed).toBe(1);
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
   const markers = result.outputLines.filter(line => line.startsWith('sentinel-'));
-  expect(markers).toHaveLength(2);
-  expect(new Set(markers.map(line => line.split('-worker-')[1])).size).toBe(2);
+  expect(markers).toHaveLength(1);
+  expect(markers[0]).toMatch(/^sentinel-0-worker-\d+$/);
+});
+
+test('should replace the worker when deferred cleanup remains incomplete after an expected body failure', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test as base, expect } from '@playwright/test';
+
+      const test = base.extend({
+        sentinel: async ({}, use, testInfo) => {
+          await use();
+          console.log('%%sentinel-start-' + testInfo.retry + '-worker-' + testInfo.workerIndex);
+          await new Promise(f => setTimeout(f, 1000));
+        },
+      });
+
+      test.afterEach(async ({}, testInfo) => {
+        if (testInfo.title === 'expected body failure')
+          await new Promise(f => setTimeout(f, 1000));
+      });
+
+      test('expected body failure', async ({ sentinel }) => {
+        test.fail();
+        expect(1).toBe(2);
+      });
+
+      test('runs after incomplete cleanup', async ({}, testInfo) => {
+        console.log('%%next-worker-' + testInfo.workerIndex);
+      });
+    `,
+  }, { timeout: 100, retries: 1 });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(2);
+  const cleanupMarkers = result.outputLines.filter(line => line.startsWith('sentinel-start-'));
+  const nextMarkers = result.outputLines.filter(line => line.startsWith('next-worker-'));
+  expect(cleanupMarkers).toHaveLength(1);
+  expect(nextMarkers).toHaveLength(1);
+  const cleanupWorker = cleanupMarkers[0].split('-worker-')[1];
+  const nextWorker = nextMarkers[0].split('next-worker-')[1];
+  expect(nextWorker).not.toBe(cleanupWorker);
 });
 
 test('should not retain a hook-scoped fixture for the next afterAll hook', async ({ runInlineTest }) => {
