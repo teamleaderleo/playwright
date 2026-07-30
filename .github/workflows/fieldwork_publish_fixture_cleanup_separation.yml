@@ -7,6 +7,15 @@ on:
     paths:
       - .github/workflows/fieldwork_publish_fixture_cleanup_separation.yml
       - .github/workflows/fieldwork_publish_fixture_cleanup_separation_trigger.yml
+  pull_request:
+    branches:
+      - fieldwork/fixture-teardown-internal-receipt
+    paths:
+      - .github/workflows/fieldwork_publish_fixture_cleanup_separation.yml
+      - .github/workflows/fieldwork_publish_fixture_cleanup_separation_trigger.yml
+      - .github/workflows/fieldwork_fixture_teardown_clean_separation.yml
+      - fieldwork-experiments/fixture-teardown-clean-separation/**
+  workflow_dispatch:
 
 permissions:
   contents: write
