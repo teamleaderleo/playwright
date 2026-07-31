@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/fieldwork-mcp-video-partial-finalization.yml'
       - 'fieldwork-experiments/mcp-video-partial-finalization/**'
+      - 'tests/mcp/video-partial-finalization.spec.ts'
   workflow_dispatch:
 
 concurrency:
@@ -31,4 +32,9 @@ jobs:
       - uses: ./.github/actions/run-test
         with:
           node-version: "22"
-          command: npm run test-mcp -- tests/mcp/video.spec.ts --project=chrome --workers=1
+          command: >-
+            npm run test-mcp --
+            tests/mcp/video.spec.ts
+            tests/mcp/video-partial-finalization.spec.ts
+            --project=chrome
+            --workers=1
