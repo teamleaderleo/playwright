@@ -25,8 +25,9 @@ jobs:
       - uses: actions/checkout@v6
       - name: Apply candidate patch
         run: |
-          git apply --check fieldwork-experiments/mcp-video-partial-finalization/partial-finalization.patch
-          git apply fieldwork-experiments/mcp-video-partial-finalization/partial-finalization.patch
+          git apply --check --recount fieldwork-experiments/mcp-video-partial-finalization/partial-finalization.patch
+          git apply --recount fieldwork-experiments/mcp-video-partial-finalization/partial-finalization.patch
+          git diff --check
       - uses: ./.github/actions/run-test
         with:
           node-version: "22"
