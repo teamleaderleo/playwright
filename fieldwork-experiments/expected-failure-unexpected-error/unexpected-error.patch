@@ -1,0 +1,163 @@
+diff --git a/packages/playwright/src/common/ipc.ts b/packages/playwright/src/common/ipc.ts
+--- a/packages/playwright/src/common/ipc.ts
++++ b/packages/playwright/src/common/ipc.ts
+@@ -117,6 +117,7 @@ export type TestEndPayload = {
+   duration: number;
+   status: TestStatus;
+   errors: TestInfoErrorPayload[];
++  hasUnexpectedError: boolean;
+   hasNonRetriableError: boolean;
+   expectedStatus: TestStatus;
+   annotations: TestAnnotation[];
+diff --git a/packages/playwright/src/worker/testInfo.ts b/packages/playwright/src/worker/testInfo.ts
+--- a/packages/playwright/src/worker/testInfo.ts
++++ b/packages/playwright/src/worker/testInfo.ts
+@@ -107,6 +107,8 @@ export class TestInfoImpl implements TestInfo {
+   _onUserStepEnd?: () => Promise<void>;
+   _hasNonRetriableError = false;
+   _hasUnhandledError = false;
++  _hasUnexpectedError = false;
++  private _testFunctionFinished = false;
+   _allowSkips = false;
+ 
+   // ------------ Main methods ------------
+@@ -365,6 +367,8 @@ export class TestInfoImpl implements TestInfo {
+   }
+ 
+   _failWithError(root: Error | unknown) {
++    if (this._testFunctionFinished)
++      this._hasUnexpectedError = true;
+     if (this.status === 'passed' || this.status === 'skipped')
+       this.status = root instanceof TimeoutManagerError ? 'timedOut' : 'failed';
+     const visit = (error: Error | unknown) => {
+@@ -426,7 +430,7 @@ export class TestInfoImpl implements TestInfo {
+   }
+ 
+   _isFailure() {
+-    return this.status !== 'skipped' && this.status !== this.expectedStatus;
++    return this._hasUnexpectedError || (this.status !== 'skipped' && this.status !== this.expectedStatus);
+   }
+@@ -440,6 +444,7 @@ export class TestInfoImpl implements TestInfo {
+   }
+ 
+   async _didFinishTestFunction() {
++    this._testFunctionFinished = true;
+     const shouldPause = (this._workerParams.pauseAtEnd && !this._isFailure()) || (this._workerParams.pauseOnError && this._isFailure());
+     if (shouldPause) {
+       await Promise.race([
+diff --git a/packages/playwright/src/worker/workerMain.ts b/packages/playwright/src/worker/workerMain.ts
+--- a/packages/playwright/src/worker/workerMain.ts
++++ b/packages/playwright/src/worker/workerMain.ts
+@@ -650,6 +650,7 @@ function buildTestEndPayload(testInfo: TestInfoImpl): ipc.TestEndPayload {
+     duration: testInfo.duration,
+     status: testInfo.status!,
+     errors: testInfo.errors.map(ipc.toTestInfoErrorPayload),
++    hasUnexpectedError: testInfo._hasUnexpectedError,
+     hasNonRetriableError: testInfo._hasNonRetriableError,
+     expectedStatus: testInfo.expectedStatus,
+     annotations: testInfo.annotations,
+diff --git a/packages/playwright/src/runner/dispatcher.ts b/packages/playwright/src/runner/dispatcher.ts
+--- a/packages/playwright/src/runner/dispatcher.ts
++++ b/packages/playwright/src/runner/dispatcher.ts
+@@ -407,7 +407,8 @@ class JobDispatcher {
+     result.annotations = params.annotations;
+     test.annotations = [...params.annotations]; // last test result wins
+     test.expectedStatus = params.expectedStatus;
+     test.timeout = params.timeout;
+-    const isFailure = result.status !== 'skipped' && result.status !== test.expectedStatus;
++    (result as any)._hasUnexpectedError = params.hasUnexpectedError;
++    const isFailure = params.hasUnexpectedError || (result.status !== 'skipped' && result.status !== test.expectedStatus);
+     if (isFailure)
+       this._failedTests.add(test);
+     if (params.hasNonRetriableError)
+diff --git a/packages/playwright/src/isomorphic/teleReceiver.ts b/packages/playwright/src/isomorphic/teleReceiver.ts
+--- a/packages/playwright/src/isomorphic/teleReceiver.ts
++++ b/packages/playwright/src/isomorphic/teleReceiver.ts
+@@ -101,6 +101,7 @@ export type JsonTestResultEnd = {
+   duration: number;
+   status: reporterTypes.TestStatus;
+   errors: reporterTypes.TestError[];
++  hasUnexpectedError?: boolean;
+   /** No longer emitted, but kept for backwards compatibility */
+   attachments?: JsonAttachment[];
+   annotations?: TestAnnotation[];
+@@ -405,6 +406,7 @@ export class TeleReporterReceiver {
+     const result = test.results.find(r => r._id === payload.id)!;
+     result.duration = payload.duration;
+     result.status = payload.status;
++    (result as any)._hasUnexpectedError = payload.hasUnexpectedError ?? false;
+     result.errors.push(...payload.errors ?? []);
+     result.error = result.errors[0];
+@@ -862,6 +864,8 @@ export function computeTestCaseOutcome(test: reporterTypes.TestCase) {
+       // - probably more cases!
+       ++didNotRun; // eslint-disable-line @typescript-eslint/no-unused-vars
++    } else if ((result as any)._hasUnexpectedError) {
++      ++unexpected;
+     } else if (result.status === test.expectedStatus) {
+       // Either passed and expected to pass, or failed and expected to fail.
+       ++expected;
+diff --git a/packages/playwright/src/reporters/teleEmitter.ts b/packages/playwright/src/reporters/teleEmitter.ts
+--- a/packages/playwright/src/reporters/teleEmitter.ts
++++ b/packages/playwright/src/reporters/teleEmitter.ts
+@@ -278,6 +278,7 @@ export class TeleReporterEmitter implements ReporterV2 {
+       id,
+       duration: result.duration,
+       status: result.status,
++      hasUnexpectedError: (result as any)._hasUnexpectedError || undefined,
+       errors: this._resultKnownErrorCounts.has(id) ? result.errors.slice(this._resultKnownAttachmentCounts.get(id)) : result.errors,
+       annotations: result.annotations?.length ? this._relativeAnnotationLocations(result.annotations) : undefined,
+     };
+diff --git a/tests/playwright-test/fixture-teardown-expected-failure-cleanup.spec.ts b/tests/playwright-test/fixture-teardown-expected-failure-cleanup.spec.ts
+--- a/tests/playwright-test/fixture-teardown-expected-failure-cleanup.spec.ts
++++ b/tests/playwright-test/fixture-teardown-expected-failure-cleanup.spec.ts
+@@ -51,3 +51,75 @@ test('should treat fixture cleanup failure as unexpected after an expected body failure', async ({ runInlineTest }) => {
+   for (const testResult of reportTest.results)
+     expect(testResult.errors.some(error => error.message?.includes('cleanup exploded'))).toBe(true);
+ });
++
++test('should keep an expected body failure expected when cleanup succeeds', async ({ runInlineTest }) => {
++  const result = await runInlineTest({
++    'a.spec.ts': `
++      import { test, expect } from '@playwright/test';
++
++      test('expected body failure only', async () => {
++        test.fail();
++        expect(1).toBe(2);
++      });
++    `,
++  }, { retries: 1 });
++
++  expect(result.exitCode).toBe(0);
++  expect(result.passed).toBe(1);
++  const reportTest = result.report.suites[0].specs[0].tests[0];
++  expect(reportTest.results).toHaveLength(1);
++  expect(reportTest.results[0].status).toBe('failed');
++});
++
++test('should treat afterEach failure as unexpected after an expected body failure', async ({ runInlineTest }) => {
++  const result = await runInlineTest({
++    'a.spec.ts': `
++      import { test, expect } from '@playwright/test';
++
++      test.afterEach(async ({}, testInfo) => {
++        console.log('%%after-each-' + testInfo.retry + '-worker-' + testInfo.workerIndex);
++        throw new Error('afterEach exploded');
++      });
++
++      test('expected body failure', async () => {
++        test.fail();
++        expect(1).toBe(2);
++      });
++    `,
++  }, { retries: 1 });
++
++  expect(result.exitCode).toBe(1);
++  expect(result.failed).toBe(1);
++  expect(result.output).toContain('afterEach exploded');
++
++  const markers = result.outputLines.filter(line => line.startsWith('after-each-'));
++  expect(markers).toHaveLength(2);
++  expect(markers[0]).toMatch(/^after-each-0-worker-\d+$/);
++  expect(markers[1]).toMatch(/^after-each-1-worker-\d+$/);
++  expect(new Set(markers.map(line => line.split('-worker-')[1])).size).toBe(2);
++});
