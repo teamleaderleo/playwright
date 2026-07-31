@@ -26,7 +26,7 @@ test('shares one video finalization across concurrent stop tool calls', async ({
     name: 'browser_start_video',
     arguments: { filename: 'concurrent.webm' },
   });
-  expect(start.isError).toBeFalsy();
+  expect(start.isError, textOf(start)).toBeFalsy();
   await produceFrames(client);
 
   const [first, second] = await Promise.all([
@@ -34,8 +34,8 @@ test('shares one video finalization across concurrent stop tool calls', async ({
     client.callTool({ name: 'browser_stop_video', arguments: {} }),
   ]);
 
-  expect(first.isError).toBeFalsy();
-  expect(second.isError).toBeFalsy();
+  expect(first.isError, textOf(first)).toBeFalsy();
+  expect(second.isError, textOf(second)).toBeFalsy();
   expect(textOf(first)).toContain('concurrent.webm');
   expect(textOf(second)).toContain('concurrent.webm');
 
@@ -47,7 +47,7 @@ test('shares one video finalization across concurrent stop tool calls', async ({
     name: 'browser_stop_video',
     arguments: {},
   });
-  expect(repeated.isError).toBeFalsy();
+  expect(repeated.isError, textOf(repeated)).toBeFalsy();
   expect(textOf(repeated)).toContain('No videos were recorded.');
 });
 
@@ -56,20 +56,20 @@ test('reports a recording after its page closes before explicit stop', async ({ 
     name: 'browser_start_video',
     arguments: { filename: 'closed-page.webm' },
   });
-  expect(start.isError).toBeFalsy();
+  expect(start.isError, textOf(start)).toBeFalsy();
   await produceFrames(client);
 
   const close = await client.callTool({
     name: 'browser_tabs',
     arguments: { action: 'close' },
   });
-  expect(close.isError).toBeFalsy();
+  expect(close.isError, textOf(close)).toBeFalsy();
 
   const stop = await client.callTool({
     name: 'browser_stop_video',
     arguments: {},
   });
-  expect(stop.isError).toBeFalsy();
+  expect(stop.isError, textOf(stop)).toBeFalsy();
   expect(textOf(stop)).toContain('closed-page.webm');
 
   const video = testInfo.outputPath('closed-page.webm');
