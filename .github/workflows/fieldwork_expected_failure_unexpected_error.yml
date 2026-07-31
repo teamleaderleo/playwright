@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/fieldwork_expected_failure_unexpected_error.yml'
       - 'fieldwork-experiments/expected-failure-unexpected-error/**'
+      - 'tests/playwright-test/expected-failure-unexpected-outcome.spec.ts'
   workflow_dispatch:
 
 concurrency:
@@ -31,4 +32,5 @@ jobs:
           command: >-
             npm run ttest --
             tests/playwright-test/fixture-teardown-expected-failure-cleanup.spec.ts
+            tests/playwright-test/expected-failure-unexpected-outcome.spec.ts
             --workers=1
