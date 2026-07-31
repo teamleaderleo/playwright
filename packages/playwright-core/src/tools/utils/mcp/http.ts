@@ -57,6 +57,11 @@ export function addressToString(address: string | net.AddressInfo | null, option
   return `${options.protocol}://${host}:${address.port}`;
 }
 
+function isLoopbackAddress(address: string | undefined): boolean {
+  const normalized = address?.startsWith('::ffff:') ? address.substring('::ffff:'.length) : address;
+  return normalized === '::1' || normalized?.startsWith('127.') === true;
+}
+
 async function installHttpTransport(httpServer: http.Server, serverBackendFactory: ServerBackendFactory, allowedHosts?: string[]) {
   const url = addressToString(httpServer.address(), { protocol: 'http', normalizeLoopback: true });
   const host = new URL(url).host;
@@ -83,6 +88,10 @@ async function installHttpTransport(httpServer: http.Server, serverBackendFactor
 
     const url = new URL(`http://localhost${req.url}`);
     if (url.pathname === '/killkillkill') {
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.statusCode = 403;
+        return res.end('Process shutdown is only allowed from loopback');
+      }
       // Require POST plus a custom header to prevent cross-origin CSRF
       // (a browser-coerced <img> GET or simple <form> POST can't add custom headers,
       // and any cross-origin request with custom headers is blocked by CORS preflight).
