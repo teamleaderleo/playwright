@@ -1,0 +1,40 @@
+name: Fieldwork MCP partial video finalization
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/fieldwork-mcp-video-partial-finalization.yml'
+      - 'fieldwork-experiments/mcp-video-partial-finalization/**'
+      - 'tests/mcp/video-partial-finalization.spec.ts'
+  workflow_dispatch:
+
+concurrency:
+  group: fieldwork-mcp-video-partial-finalization-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: 1
+  DEBUG: pw:mcp:error
+
+jobs:
+  targeted-test:
+    name: Ubuntu Node 22 Chrome
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Apply candidate patch
+        run: |
+          git apply --check --recount fieldwork-experiments/mcp-video-partial-finalization/partial-finalization.patch
+          git apply --recount fieldwork-experiments/mcp-video-partial-finalization/partial-finalization.patch
+          git diff --check
+      - uses: ./.github/actions/run-test
+        with:
+          node-version: "22"
+          command: >-
+            npm run test-mcp --
+            tests/mcp/video.spec.ts
+            tests/mcp/video-partial-finalization.spec.ts
+            --project=chrome
+            --workers=1
