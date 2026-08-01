@@ -82,20 +82,6 @@ async function installHttpTransport(httpServer: http.Server, serverBackendFactor
     }
 
     const url = new URL(`http://localhost${req.url}`);
-    if (url.pathname === '/killkillkill') {
-      // Require POST plus a custom header to prevent cross-origin CSRF
-      // (a browser-coerced <img> GET or simple <form> POST can't add custom headers,
-      // and any cross-origin request with custom headers is blocked by CORS preflight).
-      if (req.method !== 'POST' || req.headers['x-pw-mcp-kill'] !== '1') {
-        res.statusCode = 405;
-        return res.end();
-      }
-      res.statusCode = 200;
-      res.end('Killing process');
-      // Simulate Ctrl+C in a way that works on Windows too.
-      process.emit('SIGINT');
-      return;
-    }
     if (url.pathname.startsWith('/sse'))
       await handleSSE(serverBackendFactory, req, res, url, sseSessions);
     else
@@ -113,13 +99,14 @@ async function handleSSE(serverBackendFactory: ServerBackendFactory, req: http.I
       return res.end('Missing sessionId');
     }
 
-    const transport = sessions.get(sessionId);
-    if (!transport) {
+    const sessionInfo = sessions.get(sessionId);
+    if (!sessionInfo) {
       res.statusCode = 404;
-      return res.end('Session not found');
+      res.end('Session not found');
+      return;
     }
 
-    return await transport.handlePostMessage(req, res);
+    return await sessionInfo.handlePostMessage(req, res);
   } else if (req.method === 'GET') {
     const transport = new SSEServerTransport('/sse', res);
     sessions.set(transport.sessionId, transport);
