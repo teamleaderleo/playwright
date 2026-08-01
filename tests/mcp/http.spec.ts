@@ -343,7 +343,7 @@ test('http transport shared context', async ({ serverEndpoint, server }) => {
     arguments: { action: 'list' },
   });
 
-  // Should have at least one tab (the one created by first client)
+  // Should have at least one tab (the one created by client1)
   expect(tabsResult.content[0]?.text).toContain('Title');
 
   await transport1.terminateSession();
