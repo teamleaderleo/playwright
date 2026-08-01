@@ -1,0 +1,129 @@
+name: Unit 25 Playwright MCP remote authority help
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/unit-25-mcp-remote-authority-help.yml"
+      - "packages/playwright-core/src/tools/mcp/program.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Build, help, lint, and HTTP suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out exact carrier head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify exact source and changed-file fence
+        id: verify
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git merge-base HEAD 745b4dea96ac64eeb1e92d9ce4525b995e64909f)" = "745b4dea96ac64eeb1e92d9ce4525b995e64909f"
+          test "$(git diff --name-only 15b1aec478d90f0293dae7b7b6dafd494d9f0154..745b4dea96ac64eeb1e92d9ce4525b995e64909f)" = "packages/playwright-core/src/tools/mcp/program.ts"
+          git diff --check 15b1aec478d90f0293dae7b7b6dafd494d9f0154..745b4dea96ac64eeb1e92d9ce4525b995e64909f
+          mkdir -p unit-25-receipt
+
+      - name: Install exact dependencies
+        id: install
+        run: npm ci
+
+      - name: Build Playwright
+        id: build
+        run: npm run build
+
+      - name: Inspect generated MCP help
+        id: help
+        run: |
+          set -euo pipefail
+          node packages/playwright-core/lib/entry/mcp.js --help | tee unit-25-receipt/playwright-mcp-help.txt
+          node <<'NODE'
+          const fs = require('node:fs');
+          const help = fs.readFileSync('unit-25-receipt/playwright-mcp-help.txt', 'utf8').replace(/\s+/g, ' ').trim();
+          const expected = [
+            'This protects against DNS rebinding; it does not authenticate clients.',
+            'Protect non-loopback HTTP with an authenticated reverse proxy or an equivalently access-controlled trusted network boundary.',
+            'Every accepted client shares and can control the same browser context, including its tabs, cookies, storage, and page state.',
+          ];
+          for (const phrase of expected) {
+            if (!help.includes(phrase))
+              throw new Error(`Missing generated-help phrase: ${phrase}`);
+          }
+          NODE
+
+      - name: Lint changed source
+        id: lint
+        run: npx eslint packages/playwright-core/src/tools/mcp/program.ts
+
+      - name: Install Chromium and system dependencies
+        id: browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run complete MCP HTTP suite
+        id: test
+        env:
+          CI: "1"
+        run: |
+          set -o pipefail
+          npm run test-mcp tests/mcp/http.spec.ts -- --project=chromium 2>&1 | tee unit-25-receipt/http-suite.log
+
+      - name: Assemble exact receipt
+        if: always()
+        env:
+          CARRIER_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          HELP_OUTCOME: ${{ steps.help.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          mkdir -p unit-25-receipt
+          node <<'NODE'
+          const fs = require('node:fs');
+          const receipt = {
+            schemaVersion: 1,
+            generatedAt: new Date().toISOString(),
+            repository: 'teamleaderleo/playwright',
+            publicBase: '15b1aec478d90f0293dae7b7b6dafd494d9f0154',
+            cleanSourceHead: '745b4dea96ac64eeb1e92d9ce4525b995e64909f',
+            carrierHead: process.env.CARRIER_HEAD,
+            changedFile: 'packages/playwright-core/src/tools/mcp/program.ts',
+            environment: { os: 'ubuntu-24.04', node: '22', browser: 'chromium' },
+            steps: {
+              verify: process.env.VERIFY_OUTCOME || 'not-run',
+              install: process.env.INSTALL_OUTCOME || 'not-run',
+              build: process.env.BUILD_OUTCOME || 'not-run',
+              generatedHelp: process.env.HELP_OUTCOME || 'not-run',
+              lint: process.env.LINT_OUTCOME || 'not-run',
+              browserInstall: process.env.BROWSER_OUTCOME || 'not-run',
+              httpSuite: process.env.TEST_OUTCOME || 'not-run',
+            },
+          };
+          fs.writeFileSync('unit-25-receipt/receipt.json', `${JSON.stringify(receipt, null, 2)}\n`);
+          NODE
+
+      - name: Upload exact receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: unit-25-playwright-mcp-remote-authority-help
+          path: unit-25-receipt/
+          if-no-files-found: error
+          retention-days: 30
