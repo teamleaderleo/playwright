@@ -99,14 +99,13 @@ async function handleSSE(serverBackendFactory: ServerBackendFactory, req: http.I
       return res.end('Missing sessionId');
     }
 
-    const sessionInfo = sessions.get(sessionId);
-    if (!sessionInfo) {
+    const transport = sessions.get(sessionId);
+    if (!transport) {
       res.statusCode = 404;
-      res.end('Session not found');
-      return;
+      return res.end('Session not found');
     }
 
-    return await sessionInfo.handlePostMessage(req, res);
+    return await transport.handlePostMessage(req, res);
   } else if (req.method === 'GET') {
     const transport = new SSEServerTransport('/sse', res);
     sessions.set(transport.sessionId, transport);
