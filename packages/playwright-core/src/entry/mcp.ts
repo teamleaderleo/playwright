@@ -18,6 +18,38 @@ import { program } from 'commander';
 import { tools, utils } from '../coreBundle';
 import { packageJSON } from '../package';
 
+const testSigintMessage = Object.freeze({
+  type: 'playwright:mcp:test:sigint',
+  version: 1,
+} as const);
+
+type TestSigintMessage = typeof testSigintMessage;
+
+function isTestSigintMessage(message: unknown): message is TestSigintMessage {
+  if (!message || typeof message !== 'object' || Array.isArray(message))
+    return false;
+  const keys = Reflect.ownKeys(message);
+  return Object.getPrototypeOf(message) === Object.prototype &&
+    keys.length === 2 &&
+    keys.includes('type') &&
+    keys.includes('version') &&
+    (message as TestSigintMessage).type === testSigintMessage.type &&
+    (message as TestSigintMessage).version === testSigintMessage.version;
+}
+
+// The spawning test process already owns this child. Use its private IPC
+// channel to exercise the cross-platform SIGINT path without exposing a
+// network shutdown endpoint to MCP clients.
+if (process.send) {
+  const onTestMessage = (message: unknown) => {
+    if (!isTestSigintMessage(message))
+      return;
+    process.off('message', onTestMessage);
+    process.emit('SIGINT');
+  };
+  process.on('message', onTestMessage);
+}
+
 const p = program.version('Version ' + packageJSON.version).name('Playwright MCP');
 tools.decorateMCPCommand(p);
 program.parseAsync(process.argv).catch(e => {
