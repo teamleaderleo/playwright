@@ -31,7 +31,11 @@ export function setupExitWatchdog() {
     process.exit(0);
   };
 
-  process.stdin.on('close', () => handleExit('close'));
+  // EOF is reported as `end`; `close` represents destruction of the stream's
+  // underlying resource and is not emitted merely because the parent closed
+  // its writable side. Consume stdin so EOF is observable even in HTTP mode.
+  process.stdin.on('end', () => handleExit('end'));
+  process.stdin.resume();
   process.on('SIGINT', () => handleExit('SIGINT'));
   process.on('SIGTERM', () => handleExit('SIGTERM'));
 }
