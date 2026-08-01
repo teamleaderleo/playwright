@@ -26,7 +26,7 @@ import { inheritAndCleanEnv } from '../config/utils';
 import type { Config } from '../../packages/playwright-core/src/tools/mcp/config.d';
 import { ListRootsRequestSchema, PingRequestSchema } from 'playwright-core/lib/utilsBundle';
 
-const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noPort?: boolean, env?: Record<string, string> }) => Promise<{ url: URL, stderr: () => string }> }>({
+const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noPort?: boolean, env?: Record<string, string> }) => Promise<{ url: URL, stderr: () => string, send: (message: unknown) => void, disconnect: () => void }> }>({
   serverEndpoint: async ({ mcpHeadless }, use, testInfo) => {
     let cp: ChildProcess | undefined;
     const userDataDir = testInfo.outputPath('user-data-dir');
@@ -41,7 +41,7 @@ const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noP
         ...(mcpHeadless ? ['--headless'] : []),
         ...(options?.args || []),
       ], {
-        stdio: 'pipe',
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
         env: inheritAndCleanEnv({
           DEBUG: 'pw:mcp:test',
           DEBUG_COLORS: '0',
@@ -58,7 +58,7 @@ const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noP
           resolve(match[1]);
       }));
 
-      return { url: new URL(url), stderr: () => stderr };
+      return { url: new URL(url), stderr: () => stderr, send: message => cp!.send(message), disconnect: () => cp!.disconnect() };
     });
     cp?.kill('SIGTERM');
   },
@@ -141,7 +141,7 @@ test('http transport browser lifecycle (isolated)', async ({ serverEndpoint, ser
 });
 
 test('http transport browser sigint', async ({ serverEndpoint, server }) => {
-  const { url, stderr } = await serverEndpoint({ args: ['--isolated'] });
+  const { url, stderr, send } = await serverEndpoint({ args: ['--isolated'] });
 
   const transport = new StreamableHTTPClientTransport(new URL('/mcp', url));
   const client = new Client({ name: 'test', version: '1.0.0' });
@@ -151,7 +151,22 @@ test('http transport browser sigint', async ({ serverEndpoint, server }) => {
     arguments: { url: server.HELLO_WORLD },
   });
 
-  await fetch(new URL('/killkillkill', url).href, { method: 'POST', headers: { 'x-pw-mcp-kill': '1' } }).catch(() => {});
+  const oldShutdownResponse = await fetch(new URL('/killkillkill', url), {
+    method: 'POST',
+    headers: { 'x-pw-mcp-kill': '1' },
+  });
+  expect(oldShutdownResponse.status).not.toBe(200);
+  await client.ping();
+
+  send('playwright:mcp:test:sigint');
+  send({ type: 'playwright:mcp:test:sigint', version: 2 });
+  send({ type: 'playwright:mcp:test:sigint', version: 1, extra: true });
+  send(Object.create({ type: 'playwright:mcp:test:sigint', version: 1 }));
+  await client.ping();
+
+  const shutdownMessage = { type: 'playwright:mcp:test:sigint', version: 1 };
+  send(shutdownMessage);
+  send(shutdownMessage);
 
   await expect.poll(() => formatLog(stderr())).toEqual({
     'create browser (isolated)': 1,
@@ -159,6 +174,19 @@ test('http transport browser sigint', async ({ serverEndpoint, server }) => {
     'create http session': 1,
     'gracefully closing 1': 1,
   });
+});
+
+test('http transport parent IPC disconnect is inert', async ({ serverEndpoint }) => {
+  const { url, disconnect } = await serverEndpoint({ args: ['--isolated'] });
+
+  const transport = new StreamableHTTPClientTransport(new URL('/mcp', url));
+  const client = new Client({ name: 'test', version: '1.0.0' });
+  await client.connect(transport);
+  await client.ping();
+
+  disconnect();
+  await client.ping();
+  await client.close();
 });
 
 test('http transport browser lifecycle (isolated, multiclient)', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41539' } }, async ({ serverEndpoint, server }) => {
