@@ -19,7 +19,6 @@ import { testDebug } from './log';
 
 export function setupExitWatchdog() {
   let isExiting = false;
-  let isWatchingStdinEnd = false;
   const handleExit = async (signal: string) => {
     if (isExiting)
       return;
@@ -32,23 +31,7 @@ export function setupExitWatchdog() {
     process.exit(0);
   };
 
-  const watchForStdinEnd = () => {
-    if (isWatchingStdinEnd)
-      return;
-    isWatchingStdinEnd = true;
-    if (process.stdin.readableEnded) {
-      void handleExit('end');
-      return;
-    }
-    process.stdin.once('end', () => handleExit('end'));
-    process.stdin.resume();
-  };
-
-  // Preserve the existing resource-close behavior. HTTP tests opt into
-  // readable EOF only after transport mode is known, so stdio startup remains
-  // owned by StdioServerTransport.
   process.stdin.on('close', () => handleExit('close'));
   process.on('SIGINT', () => handleExit('SIGINT'));
   process.on('SIGTERM', () => handleExit('SIGTERM'));
-  return { watchForStdinEnd };
 }
