@@ -19,6 +19,7 @@ import { testDebug } from './log';
 
 export function setupExitWatchdog() {
   let isExiting = false;
+  let isWatchingStdinEnd = false;
   const handleExit = async (signal: string) => {
     if (isExiting)
       return;
@@ -31,11 +32,23 @@ export function setupExitWatchdog() {
     process.exit(0);
   };
 
-  // EOF is reported as `end`; `close` represents destruction of the stream's
-  // underlying resource and is not emitted merely because the parent closed
-  // its writable side. Consume stdin so EOF is observable even in HTTP mode.
-  process.stdin.on('end', () => handleExit('end'));
-  process.stdin.resume();
+  const watchForStdinEnd = () => {
+    if (isWatchingStdinEnd)
+      return;
+    isWatchingStdinEnd = true;
+    if (process.stdin.readableEnded) {
+      void handleExit('end');
+      return;
+    }
+    process.stdin.once('end', () => handleExit('end'));
+    process.stdin.resume();
+  };
+
+  // Preserve the existing resource-close behavior. HTTP tests opt into
+  // readable EOF only after transport mode is known, so stdio startup remains
+  // owned by StdioServerTransport.
+  process.stdin.on('close', () => handleExit('close'));
   process.on('SIGINT', () => handleExit('SIGINT'));
   process.on('SIGTERM', () => handleExit('SIGTERM'));
+  return { watchForStdinEnd };
 }
