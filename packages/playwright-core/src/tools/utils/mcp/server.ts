@@ -182,9 +182,9 @@ export async function start(serverBackendFactory: ServerBackendFactory, options:
   // only after HTTP mode is selected, so stdio protocol bytes remain exclusively
   // owned by StdioServerTransport.
   if (isUnderTest()) {
-    if (process.stdin.readableEnded)
+    if (process.stdin.readableEnded) {
       process.emit('SIGINT');
-    else {
+    } else {
       process.stdin.once('end', () => process.emit('SIGINT'));
       process.stdin.resume();
     }
