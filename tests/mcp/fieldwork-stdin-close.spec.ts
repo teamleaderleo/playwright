@@ -16,6 +16,7 @@
 
 import { ChildProcess, spawn } from 'child_process';
 
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { test as baseTest, expect, formatLog, mcpServerPath } from './fixtures';
@@ -94,4 +95,21 @@ test('http transport gracefully closes when its owning stdin closes', async ({ s
     'gracefully closing 1': 1,
   });
   await exited;
+});
+
+test('stdio transport accepts immediate client startup', async ({}, testInfo) => {
+  const transport = new StdioClientTransport({
+    command: 'node',
+    args: mcpServerPath,
+    cwd: testInfo.outputPath(),
+    stderr: 'pipe',
+    env: inheritAndCleanEnv({
+      DEBUG_COLORS: '0',
+      DEBUG_HIDE_DATE: '1',
+    }),
+  });
+  const client = new Client({ name: 'test', version: '1.0.0' });
+  await client.connect(transport);
+  await client.ping();
+  await client.close();
 });
