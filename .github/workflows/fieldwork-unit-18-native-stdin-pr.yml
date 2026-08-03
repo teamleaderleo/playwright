@@ -1,0 +1,36 @@
+name: Run unit 18 native stdin preparation
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/435-unit-18-base-15b1aec
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.event.pull_request.head.ref == 'fix/mcp-http-parent-stdin-shutdown'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Execute the reviewed deterministic edit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/fieldwork-unit-18-native-stdin.yml')
+          lines = workflow.read_text().splitlines()
+          marker = '        run: |'
+          start = lines.index(marker) + 1
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines[start:]) + '\n'
+          script = script.replace('git push --force-with-lease origin', 'git push --force origin')
+          Path('/tmp/unit-18-native.sh').write_text(script)
+          PY
+          rm .github/workflows/fieldwork-unit-18-native-stdin-pr.yml
+          bash /tmp/unit-18-native.sh
