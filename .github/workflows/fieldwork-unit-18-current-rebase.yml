@@ -1,0 +1,222 @@
+name: Prepare unit 18 current-main patch
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/435-unit-18-base-2cc9f3e
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor == 'teamleaderleo'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Build one clean current-main commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=2cc9f3ee7fdd82feb87edb7f24af77442bdc10e2
+          branch='${{ github.event.pull_request.head.ref }}'
+          test "$(git merge-base HEAD "$base")" = "$base"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}')
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'packages/playwright-core/src/tools/utils/mcp/http.ts',
+              """    if (url.pathname === '/killkillkill') {
+                // Require POST plus a custom header to prevent cross-origin CSRF
+                // (a browser-coerced <img> GET or simple <form> POST can't add custom headers,
+                // and any cross-origin request with custom headers is blocked by CORS preflight).
+                if (req.method !== 'POST' || req.headers['x-pw-mcp-kill'] !== '1') {
+                  res.statusCode = 405;
+                  return res.end();
+                }
+                res.statusCode = 200;
+                res.end('Killing process');
+                // Simulate Ctrl+C in a way that works on Windows too.
+                process.emit('SIGINT');
+                return;
+              }
+          """,
+              '',
+          )
+
+          replace_once(
+              'packages/playwright-core/src/tools/utils/mcp/server.ts',
+              "import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';\n",
+              "import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';\nimport { isUnderTest } from '@utils/debug';\n",
+          )
+          replace_once(
+              'packages/playwright-core/src/tools/utils/mcp/server.ts',
+              """    await connect(serverBackendFactory, transport, Promise.resolve(), false);
+                return;
+              }
+
+              const url = await startMcpHttpServer(options, serverBackendFactory, options.allowedHosts);
+          """,
+              """    await connect(serverBackendFactory, transport, Promise.resolve(), false);
+                return;
+              }
+
+              // The HTTP lifecycle test owns the child through its piped stdin. Install this
+              // only after HTTP mode is selected, so stdio protocol bytes remain exclusively
+              // owned by StdioServerTransport.
+              if (isUnderTest()) {
+                if (process.stdin.readableEnded) {
+                  process.emit('SIGINT');
+                } else {
+                  process.stdin.once('end', () => process.emit('SIGINT'));
+                  process.stdin.resume();
+                }
+              }
+
+              const url = await startMcpHttpServer(options, serverBackendFactory, options.allowedHosts);
+          """,
+          )
+
+          path = 'tests/mcp/http.spec.ts'
+          replace_once(
+              path,
+              "import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';\n",
+              "import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';\nimport { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';\n",
+          )
+          replace_once(
+              path,
+              "const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noPort?: boolean, env?: Record<string, string> }) => Promise<{ url: URL, stderr: () => string }> }>({\n",
+              "const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noPort?: boolean, env?: Record<string, string> }) => Promise<{ url: URL, stderr: () => string, closeStdin: () => void, exited: Promise<number | null> }> }>({\n",
+          )
+          replace_once(
+              path,
+              """      });
+              let stderr = '';
+          """,
+              """      });
+              const exited = new Promise<number | null>(resolve => cp!.once('exit', code => resolve(code)));
+              let stderr = '';
+          """,
+          )
+          replace_once(
+              path,
+              "      return { url: new URL(url), stderr: () => stderr };\n",
+              "      return { url: new URL(url), stderr: () => stderr, closeStdin: () => cp!.stdin!.end(), exited };\n",
+          )
+
+          old = """test('http transport browser sigint', async ({ serverEndpoint, server }) => {
+            const { url, stderr } = await serverEndpoint({ args: ['--isolated'] });
+
+            const transport = new StreamableHTTPClientTransport(new URL('/mcp', url));
+            const client = new Client({ name: 'test', version: '1.0.0' });
+            await client.connect(transport);
+            await client.callTool({
+              name: 'browser_navigate',
+              arguments: { url: server.HELLO_WORLD },
+            });
+
+            await fetch(new URL('/killkillkill', url).href, { method: 'POST', headers: { 'x-pw-mcp-kill': '1' } }).catch(() => {});
+
+            await expect.poll(() => formatLog(stderr())).toEqual({
+              'create browser (isolated)': 1,
+              'create context': 1,
+              'create http session': 1,
+              'gracefully closing 1': 1,
+              'close browser': 1,
+            });
+          });
+          """
+          new = """test('http transport browser sigint from parent stdin', async ({ serverEndpoint, server }) => {
+            const { url, stderr, closeStdin, exited } = await serverEndpoint({ args: ['--isolated'] });
+
+            const transport = new StreamableHTTPClientTransport(new URL('/mcp', url));
+            const client = new Client({ name: 'test', version: '1.0.0' });
+            await client.connect(transport);
+            await client.callTool({
+              name: 'browser_navigate',
+              arguments: { url: server.HELLO_WORLD },
+            });
+
+            const oldShutdownResponse = await fetch(new URL('/killkillkill', url), {
+              method: 'POST',
+              headers: { 'x-pw-mcp-kill': '1' },
+            });
+            expect(oldShutdownResponse.status).not.toBe(200);
+            await client.ping();
+
+            closeStdin();
+
+            await expect.poll(() => formatLog(stderr())).toEqual({
+              'create browser (isolated)': 1,
+              'create context': 1,
+              'create http session': 1,
+              'gracefully closing 1': 1,
+              'close browser': 1,
+            });
+            expect(await exited).toBe(0);
+          });
+
+          test('http transport ignores parent stdin outside tests', async ({ serverEndpoint }) => {
+            const { url, closeStdin, exited } = await serverEndpoint({
+              args: ['--isolated'],
+              env: { PWTEST_UNDER_TEST: '0' },
+            });
+
+            const transport = new StreamableHTTPClientTransport(new URL('/mcp', url));
+            const client = new Client({ name: 'test', version: '1.0.0' });
+            await client.connect(transport);
+            await client.ping();
+
+            closeStdin();
+            const remainedRunning = await Promise.race([
+              exited.then(() => false),
+              new Promise<boolean>(resolve => setTimeout(() => resolve(true), 500)),
+            ]);
+            expect(remainedRunning).toBe(true);
+            await client.ping();
+            await client.close();
+          });
+
+          test('stdio transport accepts immediate client startup', async ({}, testInfo) => {
+            const transport = new StdioClientTransport({
+              command: 'node',
+              args: mcpServerPath,
+              cwd: testInfo.outputPath(),
+              stderr: 'pipe',
+              env: inheritAndCleanEnv({
+                DEBUG_COLORS: '0',
+                DEBUG_HIDE_DATE: '1',
+              }),
+            });
+            const client = new Client({ name: 'test', version: '1.0.0' });
+            await client.connect(transport);
+            await client.ping();
+            await client.close();
+          });
+          """
+          replace_once(path, old, new)
+          PY
+
+          rm -f .github/fieldwork-unit-18-current-trigger
+          git diff --check
+          expected=$'packages/playwright-core/src/tools/utils/mcp/http.ts\npackages/playwright-core/src/tools/utils/mcp/server.ts\ntests/mcp/http.spec.ts'
+          test "$(git diff --name-only "$base")" = "$expected"
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git reset --soft "$base"
+          git commit -m 'fix(mcp): scope HTTP test shutdown to parent stdin'
+          git push --force-with-lease origin HEAD:"$branch"
