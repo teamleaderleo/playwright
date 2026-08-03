@@ -1,0 +1,41 @@
+name: Apply unit 18 current-main patch
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/435-unit-18-base-patch-clean
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor == 'teamleaderleo'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Apply reviewed patch and create one commit
+        shell: bash
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          base=2cc9f3ee7fdd82feb87edb7f24af77442bdc10e2
+          git fetch origin fieldwork/435-unit-18-base-patch-clean
+          git show 'origin/fieldwork/435-unit-18-base-patch-clean:.github/fieldwork/unit-18-current-main.patch' > /tmp/unit-18.patch
+          git reset --hard "$base"
+          git apply --check /tmp/unit-18.patch
+          git apply /tmp/unit-18.patch
+          git diff --check
+          expected=$'packages/playwright-core/src/tools/utils/mcp/http.ts\npackages/playwright-core/src/tools/utils/mcp/server.ts\ntests/mcp/http.spec.ts'
+          test "$(git diff --name-only "$base")" = "$expected"
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/playwright-core/src/tools/utils/mcp/http.ts packages/playwright-core/src/tools/utils/mcp/server.ts tests/mcp/http.spec.ts
+          git commit -m 'fix(mcp): scope HTTP test shutdown to parent stdin'
+          git push --force origin HEAD:"$TARGET_BRANCH"
