@@ -1,0 +1,30 @@
+name: Prepare unit 18 current-main patch on Ubuntu 22
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/435-unit-18-base-2cc9f3e
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor == 'teamleaderleo'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Run the pinned preparation script
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fieldwork/435-unit-18-base-2cc9f3e
+          git show origin/fieldwork/435-unit-18-base-2cc9f3e:.github/workflows/fieldwork-unit-18-current-rebase.yml \
+            | sed -n '/^        run: |$/,$p' \
+            | tail -n +2 \
+            | sed 's/^          //' > /tmp/unit-18-prepare.sh
+          bash /tmp/unit-18-prepare.sh
