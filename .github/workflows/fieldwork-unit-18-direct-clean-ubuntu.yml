@@ -1,0 +1,52 @@
+name: Prepare unit 18 current patch on clean Ubuntu
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/435-unit-18-base-direct-clean
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor == 'teamleaderleo'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Execute reviewed direct script
+        shell: bash
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin fieldwork/435-unit-18-base-2cc9f3e
+          git show 'origin/fieldwork/435-unit-18-base-2cc9f3e:.github/workflows/fieldwork-unit-18-current-direct.yml' > direct-workflow.yml
+          awk '
+            found && /^      - / { exit }
+            found { sub(/^          /, ""); print }
+            /^        run: \|$/ { found = 1 }
+          ' direct-workflow.yml > unit-18-direct.sh
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p = Path('unit-18-direct.sh')
+          text = p.read_text()
+          replacements = [
+              ("branch='${{ github.event.pull_request.head.ref }}'", f"branch='{os.environ['TARGET_BRANCH']}'"),
+              ("\"\"\"      });\n    let stderr = '';\n\"\"\"", "\"\"\"      });\n      let stderr = '';\n\"\"\""),
+              ("\"\"\"      });\n    const exited = new Promise<number | null>(resolve => cp!.once('exit', code => resolve(code)));\n    let stderr = '';\n\"\"\"", "\"\"\"      });\n      const exited = new Promise<number | null>(resolve => cp!.once('exit', code => resolve(code)));\n      let stderr = '';\n\"\"\""),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'wrapper anchor count={text.count(old)} for {old!r}')
+              text = text.replace(old, new, 1)
+          p.write_text(text)
+          PY
+
+          bash unit-18-direct.sh
