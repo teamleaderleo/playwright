@@ -1,0 +1,31 @@
+name: Prepare unit 18 current patch on clean branch
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/435-unit-18-base-direct-clean
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor == 'teamleaderleo'
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Execute reviewed direct script
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fieldwork/435-unit-18-base-2cc9f3e
+          awk '
+            found && /^      - / { exit }
+            found { sub(/^          /, ""); print }
+            /^        run: \|$/ { found = 1 }
+          ' <(git show origin/fieldwork/435-unit-18-base-2cc9f3e:.github/workflows/fieldwork-unit-18-current-direct.yml) > unit-18-direct.sh
+          bash unit-18-direct.sh
