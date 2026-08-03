@@ -28,4 +28,20 @@ jobs:
             found { sub(/^          /, ""); print }
             /^        run: \|$/ { found = 1 }
           ' <(git show origin/fieldwork/435-unit-18-base-2cc9f3e:.github/workflows/fieldwork-unit-18-current-direct.yml) > unit-18-direct.sh
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('unit-18-direct.sh')
+          text = p.read_text()
+          replacements = [
+              ("\"\"\"      });\n    let stderr = '';\n\"\"\"", "\"\"\"      });\n      let stderr = '';\n\"\"\""),
+              ("\"\"\"      });\n    const exited = new Promise<number | null>(resolve => cp!.once('exit', code => resolve(code)));\n    let stderr = '';\n\"\"\"", "\"\"\"      });\n      const exited = new Promise<number | null>(resolve => cp!.once('exit', code => resolve(code)));\n      let stderr = '';\n\"\"\""),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'fixture wrapper anchor count={text.count(old)} for {old!r}')
+              text = text.replace(old, new, 1)
+          p.write_text(text)
+          PY
+
           bash unit-18-direct.sh
