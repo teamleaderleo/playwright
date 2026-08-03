@@ -20,6 +20,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import debug from 'debug';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { isUnderTest } from '@utils/debug';
 import { startMcpHttpServer } from './http';
 import { toMcpTool } from './tool';
 
@@ -175,6 +176,18 @@ export async function start(serverBackendFactory: ServerBackendFactory, options:
     process.stdin.on('end', () => void transport.close());
     await connect(serverBackendFactory, transport, Promise.resolve(), false);
     return;
+  }
+
+  // The HTTP lifecycle test owns the child through its piped stdin. Install this
+  // only after HTTP mode is selected, so stdio protocol bytes remain exclusively
+  // owned by StdioServerTransport.
+  if (isUnderTest()) {
+    if (process.stdin.readableEnded) {
+      process.emit('SIGINT');
+    } else {
+      process.stdin.once('end', () => process.emit('SIGINT'));
+      process.stdin.resume();
+    }
   }
 
   const url = await startMcpHttpServer(options, serverBackendFactory, options.allowedHosts);
