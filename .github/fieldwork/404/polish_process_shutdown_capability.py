@@ -20,7 +20,8 @@ help_test = """test('help names the process-shutdown capability and consequence'
   expect(result.status).toBe(0);
   const help = `${result.stdout}${result.stderr}`;
   expect(help).toContain('--allow-process-shutdown');
-  expect(help).toContain('Any caller that can reach the server');
+  expect(help).toContain('allow the HTTP process-shutdown route');
+  expect(help).toContain('terminate this process');
 });
 
 """
