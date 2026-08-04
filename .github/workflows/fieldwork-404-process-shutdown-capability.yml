@@ -230,6 +230,13 @@ jobs:
           git config user.name 'Fieldwork Agent'
           git config user.email 'fieldwork-agent@users.noreply.github.com'
           git checkout -B "$SOURCE_BRANCH"
-          git add ${expected//$'\n'/ }
+          printf '%s\0' \
+            packages/playwright-core/src/tools/mcp/config.d.ts \
+            packages/playwright-core/src/tools/mcp/config.ts \
+            packages/playwright-core/src/tools/mcp/program.ts \
+            packages/playwright-core/src/tools/utils/mcp/http.ts \
+            packages/playwright-core/src/tools/utils/mcp/server.ts \
+            tests/mcp/http.spec.ts \
+            tests/mcp/process-shutdown-capability.spec.ts | xargs -0 git add --
           git commit -m 'fix(mcp): gate process shutdown behind explicit capability'
           git push --force-with-lease origin "HEAD:refs/heads/$SOURCE_BRANCH"
