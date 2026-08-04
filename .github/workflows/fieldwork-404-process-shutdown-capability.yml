@@ -1,0 +1,235 @@
+name: Fieldwork 404 explicit process shutdown capability
+
+on:
+  pull_request:
+    paths:
+      - .github/fieldwork/404/materialize_process_shutdown_capability.py
+      - .github/fieldwork/404/polish_process_shutdown_capability.py
+      - .github/workflows/fieldwork-404-process-shutdown-capability.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fieldwork-404-process-shutdown-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  PUBLIC_BASE: d5d5b0faa8c7df9ed3a76f279d86817a3ac4de08
+  SOURCE_BRANCH: candidate/404-explicit-process-shutdown-current-main
+
+jobs:
+  platform:
+    name: Focused capability controls (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Check out exact experiment
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact base and experiment fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$PUBLIC_BASE")" = "$PUBLIC_BASE"
+          expected=$(printf '%s\n' \
+            .github/fieldwork/404/materialize_process_shutdown_capability.py \
+            .github/fieldwork/404/polish_process_shutdown_capability.py \
+            .github/workflows/fieldwork-404-process-shutdown-capability.yml | sort)
+          actual=$(git diff --name-only "$PUBLIC_BASE..HEAD" | sort)
+          test "$actual" = "$expected"
+          git diff --check "$PUBLIC_BASE..HEAD"
+          python -m py_compile \
+            .github/fieldwork/404/materialize_process_shutdown_capability.py \
+            .github/fieldwork/404/polish_process_shutdown_capability.py
+
+      - name: Set up Node 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install, generate, and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          python .github/fieldwork/404/materialize_process_shutdown_capability.py
+          python .github/fieldwork/404/polish_process_shutdown_capability.py
+          npm run build
+          git diff --check
+
+      - name: Verify exact product fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$(printf '%s\n' \
+            packages/playwright-core/src/tools/mcp/config.d.ts \
+            packages/playwright-core/src/tools/mcp/config.ts \
+            packages/playwright-core/src/tools/mcp/program.ts \
+            packages/playwright-core/src/tools/utils/mcp/http.ts \
+            packages/playwright-core/src/tools/utils/mcp/server.ts \
+            tests/mcp/http.spec.ts \
+            tests/mcp/process-shutdown-capability.spec.ts | sort)
+          actual=$(git diff --name-only "$PUBLIC_BASE" | sort)
+          test "$actual" = "$expected"
+
+      - name: Run focused capability controls
+        shell: bash
+        env:
+          CI: '1'
+        run: |
+          set -euo pipefail
+          mkdir -p receipt
+          npm run test-mcp \
+            tests/mcp/process-shutdown-capability.spec.ts \
+            -- --project=chromium \
+            2>&1 | tee receipt/focused.log
+
+      - name: Run focused ESLint and diff hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx eslint \
+            packages/playwright-core/src/tools/mcp/config.d.ts \
+            packages/playwright-core/src/tools/mcp/config.ts \
+            packages/playwright-core/src/tools/mcp/program.ts \
+            packages/playwright-core/src/tools/utils/mcp/http.ts \
+            packages/playwright-core/src/tools/utils/mcp/server.ts \
+            tests/mcp/http.spec.ts \
+            tests/mcp/process-shutdown-capability.spec.ts \
+            2>&1 | tee receipt/eslint.log
+          git diff --check
+          git status --short > receipt/status.txt
+          {
+            echo "experiment_head=$(git rev-parse HEAD)"
+            echo "public_base=$PUBLIC_BASE"
+            echo "runner=$RUNNER_OS"
+            echo "node=$(node --version)"
+          } > receipt/identity.txt
+
+      - name: Upload platform receipt
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-404-process-shutdown-${{ matrix.os }}
+          path: receipt/
+          if-no-files-found: warn
+          retention-days: 30
+
+  full-mcp:
+    name: Complete MCP Chromium suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out exact experiment
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and generate exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$PUBLIC_BASE")" = "$PUBLIC_BASE"
+          npm ci
+          python .github/fieldwork/404/materialize_process_shutdown_capability.py
+          python .github/fieldwork/404/polish_process_shutdown_capability.py
+          npm run build
+          npx playwright install --with-deps chromium
+          git diff --check
+
+      - name: Run complete MCP Chromium suite
+        shell: bash
+        env:
+          CI: '1'
+        run: |
+          set -euo pipefail
+          mkdir -p receipt-full
+          npm run test-mcp -- --project=chromium \
+            2>&1 | tee receipt-full/mcp.log
+
+      - name: Upload complete-suite receipt
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-404-process-shutdown-full-mcp
+          path: receipt-full/
+          if-no-files-found: warn
+          retention-days: 30
+
+  materialize-source:
+    name: Materialize exact tested Playwright source
+    needs:
+      - platform
+      - full-mcp
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact experiment
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Generate and preserve exact product bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/playwright-source"
+          python .github/fieldwork/404/materialize_process_shutdown_capability.py
+          python .github/fieldwork/404/polish_process_shutdown_capability.py
+          for file in \
+            packages/playwright-core/src/tools/mcp/config.d.ts \
+            packages/playwright-core/src/tools/mcp/config.ts \
+            packages/playwright-core/src/tools/mcp/program.ts \
+            packages/playwright-core/src/tools/utils/mcp/http.ts \
+            packages/playwright-core/src/tools/utils/mcp/server.ts \
+            tests/mcp/http.spec.ts \
+            tests/mcp/process-shutdown-capability.spec.ts; do
+            mkdir -p "$RUNNER_TEMP/playwright-source/$(dirname "$file")"
+            cp "$file" "$RUNNER_TEMP/playwright-source/$file"
+          done
+
+      - name: Commit source-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git reset --hard
+          git clean -fdx
+          git checkout --detach "$PUBLIC_BASE"
+          cp -R "$RUNNER_TEMP/playwright-source/." .
+          git diff --check
+          expected=$(printf '%s\n' \
+            packages/playwright-core/src/tools/mcp/config.d.ts \
+            packages/playwright-core/src/tools/mcp/config.ts \
+            packages/playwright-core/src/tools/mcp/program.ts \
+            packages/playwright-core/src/tools/utils/mcp/http.ts \
+            packages/playwright-core/src/tools/utils/mcp/server.ts \
+            tests/mcp/http.spec.ts \
+            tests/mcp/process-shutdown-capability.spec.ts | sort)
+          actual=$(git diff --name-only "$PUBLIC_BASE" | sort)
+          test "$actual" = "$expected"
+          git config user.name 'Fieldwork Agent'
+          git config user.email 'fieldwork-agent@users.noreply.github.com'
+          git checkout -B "$SOURCE_BRANCH"
+          git add ${expected//$'\n'/ }
+          git commit -m 'fix(mcp): gate process shutdown behind explicit capability'
+          git push --force-with-lease origin "HEAD:refs/heads/$SOURCE_BRANCH"
