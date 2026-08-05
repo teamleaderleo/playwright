@@ -73,6 +73,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p receipt
           expected=$(printf '%s\n' \
             packages/playwright-core/src/tools/mcp/config.d.ts \
             packages/playwright-core/src/tools/mcp/config.ts \
@@ -81,7 +82,11 @@ jobs:
             packages/playwright-core/src/tools/utils/mcp/server.ts \
             tests/mcp/http.spec.ts \
             tests/mcp/process-shutdown-capability.spec.ts | sort)
-          actual=$(git diff --name-only "$PUBLIC_BASE" | sort)
+          actual=$({
+            git diff --name-only "$PUBLIC_BASE"
+            git ls-files --others --exclude-standard
+          } | sort -u)
+          printf '%s\n' "$actual" > receipt/product-files.txt
           test "$actual" = "$expected"
 
       - name: Run focused capability controls
@@ -90,7 +95,6 @@ jobs:
           CI: '1'
         run: |
           set -euo pipefail
-          mkdir -p receipt
           npm run test-mcp \
             tests/mcp/process-shutdown-capability.spec.ts \
             -- --project=chromium \
@@ -153,7 +157,7 @@ jobs:
           python .github/fieldwork/404/materialize_process_shutdown_capability.py
           python .github/fieldwork/404/polish_process_shutdown_capability.py
           npm run build
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium firefox
           git diff --check
 
       - name: Run complete MCP Chromium suite
@@ -163,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p receipt-full
-          npm run test-mcp -- --project=chromium \
+          xvfb-run -a npm run test-mcp -- --project=chromium \
             2>&1 | tee receipt-full/mcp.log
 
       - name: Upload complete-suite receipt
@@ -225,7 +229,10 @@ jobs:
             packages/playwright-core/src/tools/utils/mcp/server.ts \
             tests/mcp/http.spec.ts \
             tests/mcp/process-shutdown-capability.spec.ts | sort)
-          actual=$(git diff --name-only "$PUBLIC_BASE" | sort)
+          actual=$({
+            git diff --name-only "$PUBLIC_BASE"
+            git ls-files --others --exclude-standard
+          } | sort -u)
           test "$actual" = "$expected"
           git config user.name 'Fieldwork Agent'
           git config user.email 'fieldwork-agent@users.noreply.github.com'
