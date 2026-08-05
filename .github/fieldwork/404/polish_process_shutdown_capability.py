@@ -18,7 +18,7 @@ help_test = """test('help names the process-shutdown capability and consequence'
     env: inheritAndCleanEnv(),
   });
   expect(result.status).toBe(0);
-  const help = `${result.stdout}${result.stderr}`;
+  const help = `${result.stdout}${result.stderr}`.replace(/\\s+/g, ' ');
   expect(help).toContain('--allow-process-shutdown');
   expect(help).toContain('allow the HTTP process-shutdown route');
   expect(help).toContain('terminate this process');
