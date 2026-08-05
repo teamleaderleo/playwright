@@ -35,13 +35,13 @@ import type { StreamableHTTPServerTransport as StreamableHTTPServerTransportType
 const testDebug = debug('pw:mcp:test');
 
 export async function startMcpHttpServer(
-  config: { host?: string, port?: number },
+  config: { host?: string, port?: number, allowProcessShutdown?: boolean },
   serverBackendFactory: ServerBackendFactory,
   allowedHosts?: string[]
 ): Promise<string> {
   const httpServer = createHttpServer();
   await startHttpServer(httpServer, config);
-  return await installHttpTransport(httpServer, serverBackendFactory, allowedHosts);
+  return await installHttpTransport(httpServer, serverBackendFactory, allowedHosts, config.allowProcessShutdown === true);
 }
 
 export function addressToString(address: string | net.AddressInfo | null, options: {
@@ -57,7 +57,7 @@ export function addressToString(address: string | net.AddressInfo | null, option
   return `${options.protocol}://${host}:${address.port}`;
 }
 
-async function installHttpTransport(httpServer: http.Server, serverBackendFactory: ServerBackendFactory, allowedHosts?: string[]) {
+async function installHttpTransport(httpServer: http.Server, serverBackendFactory: ServerBackendFactory, allowedHosts?: string[], allowProcessShutdown = false) {
   const url = addressToString(httpServer.address(), { protocol: 'http', normalizeLoopback: true });
   const host = new URL(url).host;
   allowedHosts = (allowedHosts || [host]).map(h => h.toLowerCase());
@@ -83,6 +83,10 @@ async function installHttpTransport(httpServer: http.Server, serverBackendFactor
 
     const url = new URL(`http://localhost${req.url}`);
     if (url.pathname === '/killkillkill') {
+      if (!allowProcessShutdown) {
+        res.statusCode = 404;
+        return res.end();
+      }
       // Require POST plus a custom header to prevent cross-origin CSRF
       // (a browser-coerced <img> GET or simple <form> POST can't add custom headers,
       // and any cross-origin request with custom headers is blocked by CORS preflight).

@@ -173,7 +173,7 @@ function addServerListener(server: ServerType, event: 'close' | 'initialized', l
   };
 }
 
-export async function start(serverBackendFactory: ServerBackendFactory, options: { host?: string; port?: number, allowedHosts?: string[], socketPath?: string } = {}) {
+export async function start(serverBackendFactory: ServerBackendFactory, options: { host?: string; port?: number, allowedHosts?: string[], allowProcessShutdown?: boolean, socketPath?: string } = {}) {
   if (options.port === undefined) {
     const transport = new StdioServerTransport();
     // The SDK's StdioServerTransport doesn't detect peer disconnect — it never listens for stdin

@@ -142,7 +142,7 @@ test('http transport browser lifecycle (isolated)', async ({ serverEndpoint, ser
 });
 
 test('http transport browser sigint', async ({ serverEndpoint, server }) => {
-  const { url, stderr } = await serverEndpoint({ args: ['--isolated'] });
+  const { url, stderr } = await serverEndpoint({ args: ['--isolated', '--allow-process-shutdown'] });
 
   const transport = new StreamableHTTPClientTransport(new URL('/mcp', url));
   const client = new Client({ name: 'test', version: '1.0.0' });

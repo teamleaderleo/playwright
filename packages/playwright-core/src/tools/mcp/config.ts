@@ -34,6 +34,7 @@ type ViewportSize = { width: number; height: number };
 
 export type CLIOptions = {
   allowedHosts?: string[];
+  allowProcessShutdown?: boolean;
   allowedOrigins?: string[];
   allowUnrestrictedFileAccess?: boolean;
   blockedOrigins?: string[];
@@ -359,6 +360,7 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
       port: cliOptions.port,
       host: cliOptions.host,
       allowedHosts: cliOptions.allowedHosts,
+      allowProcessShutdown: cliOptions.allowProcessShutdown,
     },
     capabilities: cliOptions.caps as ToolCapability[],
     console: {
@@ -397,6 +399,7 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   const e = env ?? process.env;
   const options: CLIOptions = {};
   options.allowedHosts = commaSeparatedList(e.PLAYWRIGHT_MCP_ALLOWED_HOSTS);
+  options.allowProcessShutdown = envToBoolean(e.PLAYWRIGHT_MCP_ALLOW_PROCESS_SHUTDOWN);
   options.allowedOrigins = semicolonSeparatedList(e.PLAYWRIGHT_MCP_ALLOWED_ORIGINS);
   options.allowUnrestrictedFileAccess = envToBoolean(e.PLAYWRIGHT_MCP_ALLOW_UNRESTRICTED_FILE_ACCESS);
   options.blockedOrigins = semicolonSeparatedList(e.PLAYWRIGHT_MCP_BLOCKED_ORIGINS);
