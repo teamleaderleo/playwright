@@ -125,6 +125,13 @@ export type Config = {
      * This is not for CORS, but rather for the DNS rebinding protection.
      */
     allowedHosts?: string[];
+
+    /**
+     * Expose the HTTP process-shutdown route. Disabled by default. This grants any caller that can
+     * reach the server and satisfy the route method/header checks permission to terminate the MCP
+     * process; it does not authenticate an individual caller.
+     */
+    allowProcessShutdown?: boolean;
   },
 
   /**
