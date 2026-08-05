@@ -16,6 +16,7 @@ concurrency:
 
 env:
   PUBLIC_BASE: d5d5b0faa8c7df9ed3a76f279d86817a3ac4de08
+  INPUT_HEAD: ${{ github.event.pull_request.head.sha }}
   SOURCE_BRANCH: candidate/404-explicit-process-shutdown-current-main
 
 jobs:
@@ -31,16 +32,18 @@ jobs:
           - macos-latest
           - windows-latest
     steps:
-      - name: Check out exact experiment
+      - name: Check out exact experiment head
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact base and experiment fence
+      - name: Verify carrier and preserve generators
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_HEAD"
           test "$(git merge-base HEAD "$PUBLIC_BASE")" = "$PUBLIC_BASE"
           expected=$(printf '%s\n' \
             .github/fieldwork/404/materialize_process_shutdown_capability.py \
@@ -52,6 +55,10 @@ jobs:
           python -m py_compile \
             .github/fieldwork/404/materialize_process_shutdown_capability.py \
             .github/fieldwork/404/polish_process_shutdown_capability.py
+          cp .github/fieldwork/404/materialize_process_shutdown_capability.py \
+            "$RUNNER_TEMP/materialize_process_shutdown_capability.py"
+          cp .github/fieldwork/404/polish_process_shutdown_capability.py \
+            "$RUNNER_TEMP/polish_process_shutdown_capability.py"
 
       - name: Set up Node 22
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
@@ -59,13 +66,17 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install, generate, and build
+      - name: Install locked dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Generate and build exact product source
         shell: bash
         run: |
           set -euo pipefail
-          npm ci
-          python .github/fieldwork/404/materialize_process_shutdown_capability.py
-          python .github/fieldwork/404/polish_process_shutdown_capability.py
+          git checkout --detach "$PUBLIC_BASE"
+          python "$RUNNER_TEMP/materialize_process_shutdown_capability.py"
+          python "$RUNNER_TEMP/polish_process_shutdown_capability.py"
           npm run build
           git diff --check
 
@@ -116,7 +127,7 @@ jobs:
           git diff --check
           git status --short > receipt/status.txt
           {
-            echo "experiment_head=$(git rev-parse HEAD)"
+            echo "experiment_head=$INPUT_HEAD"
             echo "public_base=$PUBLIC_BASE"
             echo "runner=$RUNNER_OS"
             echo "node=$(node --version)"
@@ -136,11 +147,29 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: Check out exact experiment
+      - name: Check out exact experiment head
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify carrier and preserve generators
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_HEAD"
+          test "$(git merge-base HEAD "$PUBLIC_BASE")" = "$PUBLIC_BASE"
+          expected=$(printf '%s\n' \
+            .github/fieldwork/404/materialize_process_shutdown_capability.py \
+            .github/fieldwork/404/polish_process_shutdown_capability.py \
+            .github/workflows/fieldwork-404-process-shutdown-capability.yml | sort)
+          actual=$(git diff --name-only "$PUBLIC_BASE..HEAD" | sort)
+          test "$actual" = "$expected"
+          cp .github/fieldwork/404/materialize_process_shutdown_capability.py \
+            "$RUNNER_TEMP/materialize_process_shutdown_capability.py"
+          cp .github/fieldwork/404/polish_process_shutdown_capability.py \
+            "$RUNNER_TEMP/polish_process_shutdown_capability.py"
 
       - name: Set up Node 22
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
@@ -148,14 +177,17 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install and generate exact source
+      - name: Install locked dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Generate, build, and install browsers on exact base
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git merge-base HEAD "$PUBLIC_BASE")" = "$PUBLIC_BASE"
-          npm ci
-          python .github/fieldwork/404/materialize_process_shutdown_capability.py
-          python .github/fieldwork/404/polish_process_shutdown_capability.py
+          git checkout --detach "$PUBLIC_BASE"
+          python "$RUNNER_TEMP/materialize_process_shutdown_capability.py"
+          python "$RUNNER_TEMP/polish_process_shutdown_capability.py"
           npm run build
           npx playwright install --with-deps chromium firefox
           git diff --check
@@ -169,6 +201,11 @@ jobs:
           mkdir -p receipt-full
           xvfb-run -a npm run test-mcp -- --project=chromium \
             2>&1 | tee receipt-full/mcp.log
+          {
+            echo "experiment_head=$INPUT_HEAD"
+            echo "public_base=$PUBLIC_BASE"
+            echo "node=$(node --version)"
+          } > receipt-full/identity.txt
 
       - name: Upload complete-suite receipt
         if: always()
@@ -187,39 +224,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Check out exact experiment
+      - name: Check out exact experiment head
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Generate and preserve exact product bytes
+      - name: Verify carrier and preserve generators
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/playwright-source"
-          python .github/fieldwork/404/materialize_process_shutdown_capability.py
-          python .github/fieldwork/404/polish_process_shutdown_capability.py
-          for file in \
-            packages/playwright-core/src/tools/mcp/config.d.ts \
-            packages/playwright-core/src/tools/mcp/config.ts \
-            packages/playwright-core/src/tools/mcp/program.ts \
-            packages/playwright-core/src/tools/utils/mcp/http.ts \
-            packages/playwright-core/src/tools/utils/mcp/server.ts \
-            tests/mcp/http.spec.ts \
-            tests/mcp/process-shutdown-capability.spec.ts; do
-            mkdir -p "$RUNNER_TEMP/playwright-source/$(dirname "$file")"
-            cp "$file" "$RUNNER_TEMP/playwright-source/$file"
-          done
+          test "$(git rev-parse HEAD)" = "$INPUT_HEAD"
+          test "$(git merge-base HEAD "$PUBLIC_BASE")" = "$PUBLIC_BASE"
+          expected=$(printf '%s\n' \
+            .github/fieldwork/404/materialize_process_shutdown_capability.py \
+            .github/fieldwork/404/polish_process_shutdown_capability.py \
+            .github/workflows/fieldwork-404-process-shutdown-capability.yml | sort)
+          actual=$(git diff --name-only "$PUBLIC_BASE..HEAD" | sort)
+          test "$actual" = "$expected"
+          cp .github/fieldwork/404/materialize_process_shutdown_capability.py \
+            "$RUNNER_TEMP/materialize_process_shutdown_capability.py"
+          cp .github/fieldwork/404/polish_process_shutdown_capability.py \
+            "$RUNNER_TEMP/polish_process_shutdown_capability.py"
 
-      - name: Commit source-only candidate
+      - name: Generate exact product bytes on public base
         shell: bash
         run: |
           set -euo pipefail
-          git reset --hard
-          git clean -fdx
           git checkout --detach "$PUBLIC_BASE"
-          cp -R "$RUNNER_TEMP/playwright-source/." .
+          python "$RUNNER_TEMP/materialize_process_shutdown_capability.py"
+          python "$RUNNER_TEMP/polish_process_shutdown_capability.py"
           git diff --check
           expected=$(printf '%s\n' \
             packages/playwright-core/src/tools/mcp/config.d.ts \
@@ -234,6 +269,11 @@ jobs:
             git ls-files --others --exclude-standard
           } | sort -u)
           test "$actual" = "$expected"
+
+      - name: Commit exact source-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name 'Fieldwork Agent'
           git config user.email 'fieldwork-agent@users.noreply.github.com'
           git checkout -B "$SOURCE_BRANCH"
@@ -245,5 +285,6 @@ jobs:
             packages/playwright-core/src/tools/utils/mcp/server.ts \
             tests/mcp/http.spec.ts \
             tests/mcp/process-shutdown-capability.spec.ts | xargs -0 git add --
+          git diff --cached --check
           git commit -m 'fix(mcp): gate process shutdown behind explicit capability'
           git push --force-with-lease origin "HEAD:refs/heads/$SOURCE_BRANCH"
