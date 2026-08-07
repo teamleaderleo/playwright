@@ -25,6 +25,7 @@ import { ListRootsRequestSchema } from 'playwright-core/lib/utilsBundle';
 import { test, expect, mcpServerPath } from './fixtures';
 import { inheritAndCleanEnv } from '../config/utils';
 
+// Every root returned by roots/list should remain an allowed workspace location.
 test('explicit output can be written to the second client root', async ({}, testInfo) => {
   const rootOne = testInfo.outputPath('root-one');
   const rootTwo = testInfo.outputPath('root-two');
