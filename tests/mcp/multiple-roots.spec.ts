@@ -15,6 +15,7 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import { spawn } from 'child_process';
 import { pathToFileURL } from 'url';
 
@@ -67,14 +68,14 @@ test('explicit output can be written to the second client root', async ({}, test
       arguments: { url: 'data:text/html,<script>console.log("hello")</script>' },
     });
 
+    const outputFile = path.join(rootTwo, 'console.log');
     const response = await client.callTool({
       name: 'browser_console_messages',
-      arguments: { filename: 'console.log' },
-      _meta: { cwd: rootTwo },
+      arguments: { filename: outputFile },
     });
 
     expect(response.isError).not.toBe(true);
-    expect(await fs.promises.readFile(`${rootTwo}/console.log`, 'utf8')).toContain('hello');
+    expect(await fs.promises.readFile(outputFile, 'utf8')).toContain('hello');
 
     await transport.terminateSession();
     await client.close();
