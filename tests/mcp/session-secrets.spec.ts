@@ -42,11 +42,16 @@ test('configured secret values are redacted in saved session tool arguments', as
     },
   });
 
-  await expect.poll(async () => {
+  const readSession = async () => {
     const entries = await fs.promises.readdir(outputDir).catch(() => []);
     const sessionDir = entries.find(entry => entry.startsWith('session-'));
     if (!sessionDir)
       return '';
     return await fs.promises.readFile(path.join(outputDir, sessionDir, 'session.md'), 'utf8').catch(() => '');
-  }).not.toContain('password123');
+  };
+
+  await expect.poll(readSession).toContain('### Tool call: browser_type');
+  const session = await readSession();
+  expect(session).not.toContain('password123');
+  expect(session).toContain('<secret>PASSWORD</secret>');
 });
