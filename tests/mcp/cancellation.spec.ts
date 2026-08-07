@@ -16,6 +16,8 @@
 
 import { test, expect } from './fixtures';
 
+// MCP cancellation should cancel the Playwright operation, not only reject the
+// client-side promise while the browser keeps navigating in the background.
 test('client cancellation aborts in-flight navigation', async ({ client, server }) => {
   // Warm the browser first so the request timeout below measures navigation,
   // not browser startup.
