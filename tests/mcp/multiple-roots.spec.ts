@@ -69,10 +69,8 @@ test('explicit output can be written to the second client root', async ({}, test
 
     const response = await client.callTool({
       name: 'browser_console_messages',
-      arguments: {
-        filename: 'console.log',
-        _meta: { cwd: rootTwo },
-      },
+      arguments: { filename: 'console.log' },
+      _meta: { cwd: rootTwo },
     });
 
     expect(response.isError).not.toBe(true);
