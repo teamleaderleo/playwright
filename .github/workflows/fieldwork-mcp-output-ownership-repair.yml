@@ -1,0 +1,119 @@
+name: Fieldwork MCP output ownership repair
+
+on:
+  push:
+    branches:
+      - research/mcp-output-budget-foreign-file
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/mcp-output-budget-foreign-file
+          fetch-depth: 0
+      - name: Apply exact output ownership repair
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          context_path = Path('packages/playwright-core/src/tools/backend/context.ts')
+          context = context_path.read_text()
+          old = '''  private _disposables: Disposable[] = [];\n\n  private _runningToolName: string | undefined;'''
+          new = '''  private _disposables: Disposable[] = [];\n  private _preExistingOutputFiles: Set<string>;\n  private _protectedOutputPaths = new Set<string>();\n\n  private _runningToolName: string | undefined;'''
+          if context.count(old) != 1:
+              raise SystemExit('context field anchor mismatch')
+          context = context.replace(old, new)
+
+          old = '''    this.options = options;\n    this._rawBrowserContext = browserContext;\n    testDebug('create context');'''
+          new = '''    this.options = options;\n    this._rawBrowserContext = browserContext;\n    this._preExistingOutputFiles = options.config.outputDir ? snapshotOutputFiles(outputDir(options)) : new Set();\n    testDebug('create context');'''
+          if context.count(old) != 1:
+              raise SystemExit('context constructor anchor mismatch')
+          context = context.replace(old, new)
+
+          old = '''  async outputFile(template: FilenameTemplate, options: { origin: 'code' | 'llm' }): Promise<string> {\n    const baseName = template.suggestedFilename || `${template.prefix}-${(template.date ?? new Date()).toISOString().replace(/[:.]/g, '-')}${template.ext ? '.' + template.ext : ''}`;\n    return await outputFile(this.options, baseName, options);\n  }\n\n  async startVideoRecording'''
+          new = '''  async outputFile(template: FilenameTemplate, options: { origin: 'code' | 'llm' }): Promise<string> {\n    const baseName = template.suggestedFilename || `${template.prefix}-${(template.date ?? new Date()).toISOString().replace(/[:.]/g, '-')}${template.ext ? '.' + template.ext : ''}`;\n    return await outputFile(this.options, baseName, options);\n  }\n\n  isPreExistingOutputFile(fileName: string): boolean {\n    return this._preExistingOutputFiles.has(path.resolve(fileName));\n  }\n\n  protectOutputPath(fileName: string) {\n    this._protectedOutputPaths.add(path.resolve(fileName));\n  }\n\n  unprotectOutputPath(fileName: string) {\n    this._protectedOutputPaths.delete(path.resolve(fileName));\n  }\n\n  isOutputPathProtected(fileName: string): boolean {\n    const resolved = path.resolve(fileName);\n    return [...this._protectedOutputPaths].some(protectedPath => protectedPath === resolved || isPathInside(protectedPath, resolved));\n  }\n\n  async startVideoRecording'''
+          if context.count(old) != 1:
+              raise SystemExit('context method anchor mismatch')
+          context = context.replace(old, new)
+
+          marker = '''function originOrHostGlob(originOrHost: string) {'''
+          helper = '''function snapshotOutputFiles(dir: string): Set<string> {\n  const result = new Set<string>();\n  try {\n    const entries = fs.readdirSync(dir, { recursive: true, withFileTypes: true });\n    for (const entry of entries) {\n      if (entry.isFile())\n        result.add(path.resolve(entry.parentPath, entry.name));\n    }\n  } catch {\n  }\n  return result;\n}\n\n'''
+          if context.count(marker) != 1:
+              raise SystemExit('context helper anchor mismatch')
+          context = context.replace(marker, helper + marker)
+          context_path.write_text(context)
+
+          response_path = Path('packages/playwright-core/src/tools/backend/response.ts')
+          response = response_path.read_text()
+          old = '''  private _writtenFiles = new Set<string>();\n\n  constructor'''
+          new = '''  private _writtenFiles = new Set<string>();\n  private _protectedOutputPaths = new Set<string>();\n\n  constructor'''
+          if response.count(old) != 1:
+              raise SystemExit('response field anchor mismatch')
+          response = response.replace(old, new)
+
+          old = '''  addFileLink(title: string, fileName: string) {\n    const relativeName = this._computeRelativeTo(fileName);\n    this.addTextResult(`- [${title}](${relativeName})`);\n  }\n\n  async registerImageResult'''
+          new = '''  addFileLink(title: string, fileName: string) {\n    const relativeName = this._computeRelativeTo(fileName);\n    this.addTextResult(`- [${title}](${relativeName})`);\n  }\n\n  protectOutputPath(fileName: string) {\n    this._protectedOutputPaths.add(path.resolve(fileName));\n  }\n\n  async registerImageResult'''
+          if response.count(old) != 1:
+              raise SystemExit('response method anchor mismatch')
+          response = response.replace(old, new)
+
+          old = '''    let total = 0;\n    for (const e of entries)\n      total += e.size;'''
+          new = '''    entries = entries.filter(entry => !this._context.isPreExistingOutputFile(entry.path));\n    let total = 0;\n    for (const e of entries)\n      total += e.size;'''
+          if response.count(old) != 1:
+              raise SystemExit('response total anchor mismatch')
+          response = response.replace(old, new)
+
+          old = '''      if (this._writtenFiles.has(entry.path))\n        continue;\n      try {'''
+          new = '''      if (this._writtenFiles.has(entry.path) || this._context.isOutputPathProtected(entry.path) || this._isOutputPathProtected(entry.path))\n        continue;\n      try {'''
+          if response.count(old) != 1:
+              raise SystemExit('response protection anchor mismatch')
+          response = response.replace(old, new)
+
+          old = '''  private async _build(): Promise<Section[]> {'''
+          new = '''  private _isOutputPathProtected(fileName: string): boolean {\n    const resolved = path.resolve(fileName);\n    return [...this._protectedOutputPaths].some(protectedPath => {\n      const relative = path.relative(protectedPath, resolved);\n      return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));\n    });\n  }\n\n  private async _build(): Promise<Section[]> {'''
+          if response.count(old) != 1:
+              raise SystemExit('response helper anchor mismatch')
+          response = response.replace(old, new)
+          response_path.write_text(response)
+
+          tracing_path = Path('packages/playwright-core/src/tools/backend/tracing.ts')
+          tracing = tracing_path.read_text()
+          old = '''    const name = 'trace-' + Date.now();\n    await browserContext.tracing.start({\n      name,\n      screenshots: true,\n      snapshots: true,\n      live: true,\n    });'''
+          new = '''    const name = 'trace-' + Date.now();\n    context.protectOutputPath(tracesDir);\n    try {\n      await browserContext.tracing.start({\n        name,\n        screenshots: true,\n        snapshots: true,\n        live: true,\n      });\n    } catch (error) {\n      context.unprotectOutputPath(tracesDir);\n      throw error;\n    }'''
+          if tracing.count(old) != 1:
+              raise SystemExit('tracing start anchor mismatch')
+          tracing = tracing.replace(old, new)
+
+          old = '''    await browserContext.tracing.stop();\n    // eslint-disable-next-line no-restricted-syntax\n    delete (browserContext.tracing as any)[traceLegendSymbol];\n\n    response.addTextResult(`Trace recording stopped.`);'''
+          new = '''    await browserContext.tracing.stop();\n    response.protectOutputPath(traceLegend.tracesDir);\n    context.unprotectOutputPath(traceLegend.tracesDir);\n    // eslint-disable-next-line no-restricted-syntax\n    delete (browserContext.tracing as any)[traceLegendSymbol];\n\n    response.addTextResult(`Trace recording stopped.`);'''
+          if tracing.count(old) != 1:
+              raise SystemExit('tracing stop anchor mismatch')
+          tracing = tracing.replace(old, new)
+          tracing_path.write_text(tracing)
+          PY
+          git diff --check
+          git diff -- packages/playwright-core/src/tools/backend/context.ts packages/playwright-core/src/tools/backend/response.ts packages/playwright-core/src/tools/backend/tracing.ts
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+          npx playwright install chromium
+      - name: Run output ownership controls
+        run: npx playwright test -c tests/mcp/playwright.config.ts --project=chromium tests/mcp/output-max-size.spec.ts tests/mcp/tracing.spec.ts
+      - name: Run focused lint
+        run: npx eslint packages/playwright-core/src/tools/backend/context.ts packages/playwright-core/src/tools/backend/response.ts packages/playwright-core/src/tools/backend/tracing.ts tests/mcp/output-max-size.spec.ts tests/mcp/tracing.spec.ts
+      - name: Publish repaired source and remove carrier
+        run: |
+          rm .github/workflows/fieldwork-mcp-output-ownership-repair.yml
+          git add packages/playwright-core/src/tools/backend/context.ts packages/playwright-core/src/tools/backend/response.ts packages/playwright-core/src/tools/backend/tracing.ts .github/workflows/fieldwork-mcp-output-ownership-repair.yml
+          test "$(git diff --cached --name-only | sort)" = $'.github/workflows/fieldwork-mcp-output-ownership-repair.yml\npackages/playwright-core/src/tools/backend/context.ts\npackages/playwright-core/src/tools/backend/response.ts\npackages/playwright-core/src/tools/backend/tracing.ts'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'fix: scope MCP output eviction to owned files'
+          git push origin HEAD:research/mcp-output-budget-foreign-file
