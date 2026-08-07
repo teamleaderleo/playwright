@@ -35,7 +35,8 @@ test('hung background tab does not block a healthy current tab response', async 
   await background.evaluate(() => {
     setTimeout(() => {
       // Deliberately simulate an unresponsive renderer in a background tab.
-      while (true) {}
+      while (Date.now() > 0)
+        Math.random();
     }, 100);
   });
   await new Promise(resolve => setTimeout(resolve, 500));
