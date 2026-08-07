@@ -84,6 +84,28 @@ test('check that trace is saved with browser_start_tracing (no output dir)', asy
   ]);
 });
 
+test('output budget does not evict an active trace', async ({ startClient, server }, testInfo) => {
+  const outputDir = testInfo.outputPath('output');
+  const { client } = await startClient({
+    args: [`--output-dir=${outputDir}`, '--output-max-size=1', '--caps=tracing'],
+  });
+
+  await client.callTool({ name: 'browser_start_tracing' });
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.HELLO_WORLD },
+  });
+  await client.callTool({ name: 'browser_stop_tracing' });
+
+  const files = await fs.promises.readdir(path.join(outputDir, 'traces'));
+  expect(files).toEqual([
+    'resources',
+    expect.stringMatching(/trace-\d+\.network/),
+    expect.stringMatching(/trace-\d+\.stacks/),
+    expect.stringMatching(/trace-\d+\.trace/),
+  ]);
+});
+
 test('browser_stop_tracing without start returns error', async ({ startClient }) => {
   const { client } = await startClient({
     args: ['--caps=tracing'],
