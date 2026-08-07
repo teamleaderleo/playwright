@@ -23,6 +23,7 @@ const emptyEnv = {};
 
 test.skip(({ mcpBrowser }) => mcpBrowser !== 'chrome', 'Configuration-only test.');
 
+// A typo must not silently select the default Chrome browser.
 test('invalid --browser value is rejected', async () => {
   await expect(resolveCLIConfigForMCP({ browser: 'not-a-browser' }, emptyEnv))
       .rejects.toThrow(/invalid.*browser/i);
