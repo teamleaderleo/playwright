@@ -69,3 +69,21 @@ test('oversize single file evicts everything and still writes', async ({ startCl
 
   expect(fs.readdirSync(outputDir)).toHaveLength(1);
 });
+
+test('does not evict pre-existing files from a configured output directory', async ({ startClient, server }, testInfo) => {
+  const outputDir = testInfo.outputPath('output');
+  await fs.promises.mkdir(outputDir, { recursive: true });
+  const preExistingFile = path.join(outputDir, 'project-notes.txt');
+  await fs.promises.writeFile(preExistingFile, 'keep me');
+
+  const { client } = await startClient({
+    config: {
+      outputDir,
+      outputMaxSize: 1,
+    },
+  });
+
+  await client.callTool({ name: 'browser_navigate', arguments: { url: server.HELLO_WORLD } });
+
+  expect(fs.existsSync(preExistingFile)).toBe(true);
+});
