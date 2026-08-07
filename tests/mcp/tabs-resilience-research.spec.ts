@@ -50,10 +50,11 @@ test('hung background tab does not block a healthy current tab response', async 
   // The current tab is healthy, so its tool call should not wait on the
   // unresponsive background tab merely to render the open-tab header.
   await new Promise(resolve => setTimeout(resolve, 2000));
-  expect(settled).toBe(true);
+  const settledWhileBackgroundWasHung = settled;
 
-  // Ensure the intentionally wedged renderer cannot strand fixture cleanup if
-  // the assertion above fails on current source.
+  // Release any pending header/title request before reporting the probe result.
   await background.close().catch(() => {});
   await call.catch(() => {});
+
+  expect(settledWhileBackgroundWasHung).toBe(true);
 });
