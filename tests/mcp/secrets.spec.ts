@@ -189,3 +189,26 @@ test('empty secret value is ignored', async ({ startClient, server }) => {
     snapshot: expect.stringContaining(`<secret>X-PASSWORD</secret>`),
   });
 });
+
+test('overlapping secret values redact the longest value', async ({ startClient, server }) => {
+  const secretsFile = test.info().outputPath('secrets.env');
+  await fs.promises.writeFile(secretsFile, 'SHORT=abc\nLONG=abcdef');
+
+  const { client } = await startClient({
+    args: ['--secrets', secretsFile],
+  });
+
+  server.setContent('/', `
+    <!DOCTYPE html>
+    <html>
+      <body><p>abcdef</p></body>
+    </html>
+  `, 'text/html');
+
+  expect(await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.PREFIX },
+  })).toHaveResponse({
+    snapshot: expect.stringContaining('<secret>LONG</secret>'),
+  });
+});
