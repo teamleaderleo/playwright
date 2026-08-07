@@ -16,6 +16,8 @@
 
 import { test, expect, extensionId } from './extension-fixtures';
 
+// Extension mode is documented for Chrome/Edge only. An unsupported browser
+// should fail rather than silently selecting Chrome.
 test('extension mode rejects Firefox instead of opening Chrome', async ({ browserWithExtension, startClient }) => {
   const browserContext = await browserWithExtension.launch();
   const { client } = await startClient({
