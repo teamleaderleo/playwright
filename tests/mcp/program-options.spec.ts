@@ -23,6 +23,7 @@ const { decorateMCPCommand } = tools;
 
 test.skip(({ mcpBrowser }) => mcpBrowser !== 'chrome', 'CLI parsing only.');
 
+// Variadic Commander options should accumulate each supplied permission.
 test('space-separated --grant-permissions values are preserved', () => {
   const command = new Command();
   decorateMCPCommand(command);
