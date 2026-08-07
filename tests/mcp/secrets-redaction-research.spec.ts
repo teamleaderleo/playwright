@@ -15,6 +15,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { test, expect } from './fixtures';
 
@@ -62,4 +63,28 @@ test('redacts the longest overlapping secret value', async ({ startClient, serve
   })).toHaveResponse({
     result: expect.stringContaining('<secret>LONG</secret>'),
   });
+});
+
+test('redacts configured values from saved session tool arguments', async ({ startClient, server }) => {
+  const secretsFile = test.info().outputPath('secrets.env');
+  const outputDir = test.info().outputPath('output');
+  await fs.promises.writeFile(secretsFile, 'TOKEN=session-value-123');
+
+  const { client } = await startClient({
+    args: ['--secrets', secretsFile, '--save-session', '--output-dir', outputDir],
+  });
+
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.EMPTY_PAGE },
+  });
+  await client.callTool({
+    name: 'browser_evaluate',
+    arguments: { function: '() => "session-value-123"' },
+  });
+
+  const sessionFolder = fs.readdirSync(outputDir).find(entry => entry.startsWith('session-'))!;
+  const sessionFile = path.join(outputDir, sessionFolder, 'session.md');
+  await expect.poll(async () => fs.promises.readFile(sessionFile, 'utf8')).not.toContain('session-value-123');
+  expect(await fs.promises.readFile(sessionFile, 'utf8')).toContain('<secret>TOKEN</secret>');
 });
